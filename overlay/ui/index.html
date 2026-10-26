@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none';">
-  <title>OpenCluely Overlay</title>
+  <title>Chat</title>
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
+<div id="appBackdrop" aria-hidden="true"></div>
 <svg class="sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-  <symbol id="spark" viewBox="0 0 24 24"><path d="m12 2 2.8 7.2L22 12l-7.2 2.8L12 22l-2.8-7.2L2 12l7.2-2.8Z"/></symbol>
   <symbol id="image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1.5"/><path d="m4 17 5-5 4 4 3-3 5 5"/></symbol>
   <symbol id="capture" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3"/><rect x="7" y="7" width="10" height="10" rx="2"/></symbol>
   <symbol id="settings" viewBox="0 0 24 24"><path d="m10 3-.6 2.4-2 .9-2.2-.7-2 3.4 1.7 1.7-.1 2.2-1.7 1.7 2 3.5 2.3-.7 2 .9.6 2.4h4l.6-2.4 2-.9 2.2.7 2-3.5-1.7-1.7.1-2.2 1.7-1.7-2-3.4-2.3.7-2-.9L14 3Z"/><circle cx="12" cy="12" r="3"/></symbol>
@@ -22,7 +22,6 @@
 </svg>
 <main class="shell" id="shell">
   <header class="titlebar">
-    <div class="brand"><span class="logo"><svg><use href="#spark"/></svg></span><div><strong>OpenCluely<span class="version">02</span></strong><span class="eyebrow">DESKTOP ASSISTANT</span></div></div>
     <div class="window-actions">
       <button class="icon-button" id="compactButton" title="Toggle compact view" aria-label="Toggle compact view"><svg><use href="#compact"/></svg></button>
       <button class="icon-button" id="hideButton" title="Hide to tray · Ctrl+Alt+Space" aria-label="Hide to tray"><span class="minus"></span></button>
@@ -31,22 +30,17 @@
   <div class="toolbar">
     <label class="provider-pill"><span class="provider-dot"></span><select id="provider" aria-label="AI provider"><option value="anthropic">Claude</option><option value="gemini">Gemini</option><option value="openai">OpenAI</option></select></label>
     <div class="tools">
-      <button class="icon-button" id="uploadButton" title="Attach a PNG or JPEG" aria-label="Attach an image"><svg><use href="#image"/></svg></button>
+      <button class="icon-button" id="uploadButton" title="Attach up to 10 PNG or JPEG images" aria-label="Attach images"><svg><use href="#image"/></svg></button>
       <button class="icon-button" id="captureButton" title="Capture selected display · Ctrl+Alt+S" aria-label="Capture a screenshot"><svg><use href="#capture"/></svg></button>
       <button class="icon-button" id="passButton" title="Click-through · Ctrl+Alt+I" aria-label="Toggle click-through" aria-pressed="false"><svg><use href="#pass"/></svg></button>
       <span class="separator"></span>
-      <button class="icon-button" id="settingsButton" title="Settings" aria-label="Open settings"><svg><use href="#settings"/></svg></button>
+      <button class="icon-button" id="settingsButton" title="Settings (uses keyboard focus)" aria-label="Open settings"><svg><use href="#settings"/></svg></button>
     </div>
   </div>
-  <div class="model-strip"><select id="quickModel" aria-label="Model for the selected provider"></select><button id="newChatButton" type="button" class="new-chat-button">＋ New chat</button></div>
+  <div class="model-strip"><select id="quickModel" aria-label="Model for the selected provider"></select><select id="quickEffort" aria-label="Reasoning effort" title="Reasoning effort"></select><button id="newChatButton" type="button" class="new-chat-button">＋ New chat</button></div>
   <div class="mode-banner" id="passBanner" hidden>Clicks pass to the app underneath <kbd data-shortcut="Click-through">Ctrl+Alt+I</kbd> to interact</div>
   <section class="content" id="content" aria-label="Conversation">
     <div class="welcome" id="welcome">
-      <div class="welcome-symbol"><svg><use href="#spark"/></svg><span class="orbit"></span></div>
-      <div class="welcome-kicker"><span class="status-dot"></span> HERE WHEN YOU NEED IT</div>
-      <h1>A little help,<br>right where you work.</h1>
-      <p>Ask a question. Add an image.<br>Keep your flow.</p>
-      <button class="image-card" id="welcomeUpload"><span class="card-icon"><svg><use href="#image"/></svg></span><span><strong>Have a question in an image?</strong><small>Upload, paste, or take a screenshot</small></span><span class="card-arrow">↗</span></button>
       <div class="setup-note" id="setupNote"><span class="status-dot amber"></span><span>Add your API key in <button id="setupButton">Settings</button> to get started.</span></div>
     </div>
     <div class="messages" id="messages" aria-live="polite" aria-relevant="additions"></div>
@@ -54,28 +48,32 @@
   </section>
   <div class="request-status" id="requestStatus" role="status" hidden><span class="status-dot"></span><span id="statusText">Reading your question…</span><button id="stopButton">Stop</button></div>
   <form class="composer" id="questionForm">
-    <div class="attachment" id="attachment" hidden><img id="imagePreview" alt="Attached question preview"><div><strong id="imageName"></strong><span id="imageSize"></span></div><button type="button" class="icon-button" id="removeImage" title="Remove image" aria-label="Remove image"><svg><use href="#close"/></svg></button></div>
-    <textarea id="question" placeholder="Ask anything, or paste an image…" rows="2" maxlength="12000" aria-label="Your question"></textarea>
+    <section class="attachments" id="attachment" aria-label="Attached images" hidden><div class="attachment-heading"><span id="attachmentCount" role="status"></span><button type="button" class="text-button" id="removeImages">Remove all</button></div><div class="attachment-list" id="attachmentList"></div></section>
+    <textarea id="question" placeholder="Ask a question, or add up to 10 images…" rows="2" maxlength="12000" aria-label="Your question"></textarea>
     <div class="composer-bottom"><span class="input-hint"><kbd>Enter</kbd> to ask <span>·</span> Shift+Enter for a new line</span><button class="send-button" id="sendButton" type="submit" aria-label="Send question"><svg><use href="#arrow"/></svg></button></div>
   </form>
   <footer class="footer"><span><svg><use href="#pin"/></svg> Always on top</span><span id="footerStatus">Runs in your tray</span></footer>
-  <div class="drop-zone" id="dropZone" hidden><svg><use href="#image"/></svg><strong>Drop your question here</strong><span>PNG or JPEG · up to 10 MB</span></div>
+  <div class="drop-zone" id="dropZone" hidden><svg><use href="#image"/></svg><strong>Drop images here</strong><span>Up to 10 PNG or JPEG images · 10 MB each</span></div>
   <div class="toast" id="toast" role="status" hidden></div>
 </main>
 
 <dialog id="settingsDialog" class="settings-dialog">
-  <div class="dialog-heading"><div><span class="eyebrow">MAKE IT YOURS</span><h2>Settings</h2></div><button class="icon-button" id="closeSettings" aria-label="Close settings"><svg><use href="#close"/></svg></button></div>
+  <div class="dialog-heading"><h2>Settings</h2><button class="icon-button" id="closeSettings" aria-label="Close settings"><svg><use href="#close"/></svg></button></div>
   <form id="settingsForm">
-    <label>AI provider<select id="settingsProvider"><option value="anthropic">Anthropic Claude</option><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option></select></label>
-    <label>Model<select id="modelPreset"></select><small>Text and image models. Availability and cost depend on your API account.</small></label>
+    <label>AI provider<select id="settingsProvider"><option value="anthropic">Anthropic Claude</option><option value="gemini">Google Gemini</option><option value="openai">OpenAI / ChatGPT</option></select></label>
+    <label>Model<select id="modelPreset"></select><small>Available chat models from your API account. Text-only models are marked.</small></label>
+    <div class="catalog-controls"><small id="modelStatus" role="status"></small><button type="button" id="refreshModels" class="text-button">Refresh models / check key</button></div>
     <label id="customModelLabel" hidden>Custom model ID<input id="model" maxlength="100" spellcheck="false" autocomplete="off"><small>Enter an API model ID with text and image support.</small></label>
+    <label>Reasoning effort<select id="reasoningEffort" aria-describedby="reasoningHint"></select><small id="reasoningHint">Higher effort can take longer and cost more. Saved separately for each model.</small></label>
     <p id="openaiNote" class="privacy-note" hidden>Uses an OpenAI API key and separate API billing. A ChatGPT subscription alone does not provide an API key.</p>
     <label>API key <span id="keyBadge" class="key-badge"></span><input id="apiKey" type="password" maxlength="500" autocomplete="off" spellcheck="false" placeholder="Paste your key"><small id="keyNote">Saved encrypted on this device, including after restart. A new key is verified before replacing your saved key. Leave blank to keep it.</small></label>
     <button type="button" id="removeKey" class="text-button danger" hidden>Remove saved key</button>
-    <label class="range-label">Overlay opacity <output id="opacityValue">98%</output><input id="opacity" type="range" min="65" max="100" value="98"></label>
+    <label class="range-label">App opacity <output id="opacityValue">98%</output><input id="opacity" type="range" min="10" max="100" value="98" aria-label="App opacity" aria-describedby="opacityHint"><small id="opacityHint">Fades the interface and conversation text. Code boxes use their own setting.</small></label>
+    <label class="range-label">Code box opacity <output id="codeOpacityValue">100%</output><input id="codeOpacity" type="range" min="10" max="100" value="100" aria-label="Code box opacity" aria-describedby="codeOpacityHint"><small id="codeOpacityHint">Controls code boxes, including their text and Copy button, independently of app opacity.</small></label>
     <label>Screenshot display<select id="displaySelect"><option value="">Display under the pointer</option></select><small>Preview screenshots before sending them to the provider.</small></label>
     <label class="check-label"><input id="launchAtLogin" type="checkbox"><span>Start in tray when I sign in</span></label>
     <label class="check-label"><input id="rememberHistory" type="checkbox"><span>Restore my conversation after reopening</span></label>
+    <p class="privacy-note">Also saves submitted questions and partial answers with encryption. After an interruption, saved text reappears for review; retrying sends a new request. Images and unsent drafts are not saved.</p>
     <label class="check-label"><input id="protectFromQuit" type="checkbox"><span>Protect against normal Quit requests</span></label>
     <p class="privacy-note">Close requests hide the overlay. Normal external Quit requests are blocked. Quit from this app asks for confirmation. Windows shutdown and apps that terminate processes can still stop it.</p>
     <label class="check-label"><input id="hideFromCapture" type="checkbox"><span>Hide overlay from screen sharing and recordings</span></label>
@@ -87,14 +85,14 @@
   <section class="recovery-control" id="recoveryControl" aria-label="Automatic reopening" hidden>
     <label class="check-label"><input id="recoveryEnabled" type="checkbox" aria-describedby="recoveryStatus recoveryHint recoveryError"><span>Reopen automatically after a crash or forced termination</span></label>
     <p class="recovery-status" id="recoveryStatus" role="status" aria-live="polite"></p>
-    <p class="recovery-hint" id="recoveryHint">Applies immediately. Turning this off pauses reopening until you next open OpenCluely. Quit OpenCluely stops the app and automatic reopening.</p>
+    <p class="recovery-hint" id="recoveryHint">Applies immediately. Turning this off pauses reopening until the next launch. Quit stops the app and automatic reopening.</p>
     <p class="recovery-error" id="recoveryError" role="alert" hidden></p>
   </section>
   <section class="chat-archive" aria-label="Previous chats"><label for="chatSelect">Previous chats</label><select id="chatSelect"><option value="">Choose a previous chat…</option></select><div><button type="button" id="openChatButton" class="text-button" disabled>Open selected chat</button><button type="button" id="deleteChatButton" class="text-button danger" disabled>Delete selected chat…</button></div><p class="privacy-note">New chat saves the current conversation here. Chats restore after reopening when conversation history is enabled. Images remain in memory only.</p></section>
   <div class="shortcut-list"><span>Show / hide<kbd data-shortcut="Show / hide">Ctrl+Alt+Space</kbd></span><span>Click-through<kbd data-shortcut="Click-through">Ctrl+Alt+I</kbd></span><span>Screenshot<kbd data-shortcut="Screenshot">Ctrl+Alt+S</kbd></span></div>
   <div class="settings-warning" id="settingsWarnings" hidden></div>
   <div class="session-actions"><button id="exportButton" class="text-button">Export conversation</button><button id="clearButton" class="text-button danger">Clear conversation</button></div>
-  <button id="quitButton" class="quit-button">Quit OpenCluely</button>
+  <button id="quitButton" class="quit-button">Quit</button>
 </dialog>
 <dialog id="clearDialog" class="confirm-dialog"><h2>Clear this conversation?</h2><p>This removes the conversation saved on this device and releases attached images.</p><div><button id="cancelClear" class="secondary-button">Keep conversation</button><button id="confirmClear" class="primary-button">Clear</button></div></dialog>
 <dialog id="deleteChatDialog" class="confirm-dialog"><h2>Delete this saved chat?</h2><p id="deleteChatTitle"></p><div><button id="cancelDeleteChat" class="secondary-button">Keep chat</button><button id="confirmDeleteChat" class="primary-button">Delete chat</button></div></dialog>

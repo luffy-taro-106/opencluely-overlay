@@ -1,13 +1,13 @@
 {
   "name": "opencluely-overlay",
-  "version": "2.3.0",
+  "version": "2.3.8",
   "description": "Windows desktop overlay with OpenAI, Claude, Gemini, saved chats and owner-controlled automatic reopening",
   "main": "overlay/main.js",
   "author": "OpenCluely contributors",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ashokchilka99/opencluely-overlay.git"
+    "url": "https://github.com/luffy-taro-106/opencluely-overlay.git"
   },
   "engines": {
     "node": ">=22"
@@ -15,8 +15,9 @@
   "scripts": {
     "start": "node scripts/launch.js",
     "dev": "node scripts/launch.js",
-    "test": "node --test tests/core.test.js tests/providers.test.js tests/storage.test.js tests/platform.test.js tests/quit-guard.test.js tests/recovery.test.js",
+    "test": "node --test tests/core.test.js tests/models.test.js tests/providers.test.js tests/storage.test.js tests/platform.test.js tests/quit-guard.test.js tests/recovery.test.js tests/interrupted-work.test.js tests/windows-panel.test.js",
     "test:desktop": "node scripts/launch.js --smoke-test",
+    "test:interruption": "node scripts/test-interruption.js",
     "test:recovery": "node --test --test-concurrency=1 tests/recovery-native.test.js",
     "icons": "node scripts/create-icons.js",
     "postinstall": "node scripts/create-icons.js",
@@ -78,10 +79,19 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "deleteAppDataOnUninstall": false,
-      "artifactName": "OpenCluely-Overlay-Setup-${version}.${ext}"
+      "artifactName": "OpenCluely-Overlay-Setup-${version}.${ext}",
+      "customNsisBinary": {
+        "url": "https://github.com/electron-userland/electron-builder-binaries/releases/download/nsis%402.0.1/nsis-bundle-3.12.tar.gz",
+        "checksum": "fe36a357f3a220db893498e830fd80e0769768a18a99f4e4d2447b982538feed",
+        "version": "2.0.1"
+      }
     },
     "portable": {
       "artifactName": "OpenCluely-Overlay-Portable-${version}.${ext}"
-    }
+    },
+    "toolsets": {
+      "nsis": "1.2.1"
+    },
+    "npmRebuild": false
   }
 }

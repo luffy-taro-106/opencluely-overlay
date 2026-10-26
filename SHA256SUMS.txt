@@ -1,1 +1,2 @@
-225d6984290a114ab5d6546224979652e4677851488d84e18aead2ed86ef1ee8  OpenCluely-Overlay-Setup-2.3.0.exe
+b00b52f15b918fcdcc1e8761052b420006944b1b4d2e7ff8645cac265f63c33d  OpenCluely-Overlay-Setup-2.3.5.exe
+ee7f0292a5e2106d82bf5a9f6269f6ac8832c888e3fbc022598b4f4a19b6ef1a  OpenCluely-Overlay-Setup-2.3.8.exe

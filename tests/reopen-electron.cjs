@@ -24,6 +24,9 @@ app.whenReady().then(()=>{
     assert.equal(chats.current[0].text,'Current chat after restart');
     assert.equal(chats.archive[0].history[0].text,'Archived chat after restart');
     assert.equal(store.read('preferences.json',{}).models.openai,'gpt-6.1-sol');
+    assert.equal(store.read('preferences.json',{}).reasoningEfforts.openai['gpt-6.1-sol'],'high');
+    assert.equal(store.read('preferences.json',{}).reasoningEfforts.openai['gpt-6-luna'],'medium');
+    assert.ok(store.read('model-catalog.json',{}).openai.models.some(model=>model.id === 'gpt-6.1-sol'));
     result.passed=true; console.log(`PASS ${result.name}`);
   } catch { result.error='Saved test profile did not restore after process restart'; console.error(`FAIL ${result.name}`); }
   report.results.push(result); fs.writeFileSync(resultsFile,JSON.stringify(report,null,2)); app.exit(result.passed?0:1);

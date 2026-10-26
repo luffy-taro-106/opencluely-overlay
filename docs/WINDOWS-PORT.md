@@ -1,4 +1,48 @@
-# Windows 2.3 port record
+# Windows 2.3.8 update — 24 October 2026
+
+Reference: Mac commit `5fd5ab805d465f04586831d67b782853566a8859`, including live-model and reasoning changes from `16c0e5f`. The Windows-specific focus controller uses Electron/Win32 no-activation behavior. Ordinary display, screenshot restoration, pointer controls and leaving click-through remain passive. A genuine click in an editable field, Ctrl+Alt+T or the explicit tray typing action enables ordinary Windows keyboard focus. Returning to another app releases it. Typing temporarily activates the overlay; the Mac inactive-application/key-panel behavior is not claimed on Windows. See [focus behavior](NONACTIVATING-PANEL.md).
+
+Validation so far: 82 source/model/provider/controller tests, four native Windows recovery tests, and ten isolated GUI focus checks passed. The GUI checks use disposable Chromium windows and an actual desktop click to return focus. They verify unchanged browser blur count on passive display, overlay-only typing, no text leakage to the browser field, automatic release on browser return, click-through, and hide/restore. No provider generation or user credential was used. The complete desktop regression suite remains blocked when launched inside the command sandbox; the focus checks ran through the supported native desktop tool.
+
+The Windows native recovery helper and its existing retry timing are preserved. The Mac one-minute retry change is outside this browser-focus adaptation.
+
+Installed successfully on 24 October 2026 in `C:\Program Files\OpenCluely Overlay`; installer exited 0. All 19 installed overlay files match the tested source byte-for-byte, and the native recovery helper is included. The installed UI restores the existing conversation and Gemini 3.5 Flash Lite selection, exposes reasoning effort, and confirms the Ctrl+Alt+T typing state. The encrypted provider profile was preserved. Installer SHA-256: `ee7f0292a5e2106d82bf5a9f6269f6ac8832c888e3fbc022598b4f4a19b6ef1a`.
+
+---
+
+# Windows 2.3.5 port record
+
+## 21 October 2026 update
+
+Ported the full latest Mac changeset from [luffy-taro-106/mac-godsplan, f5da450](https://github.com/luffy-taro-106/mac-godsplan/commit/f5da45024c1e64171663f903c536a6435efa658e) onto Windows base `e4f7b83` in [luffy-taro-106/opencluely-overlay](https://github.com/luffy-taro-106/opencluely-overlay).
+
+- Ten ordered image attachments through upload, paste, drag/drop and repeated screenshots; individual removal, bounded memory, names-only persistence and legacy compatibility.
+- The Mac plain chat interface without the previous logo/heading/slogans.
+- Independent app and code-box opacity, each 10%–100%, including streamed and nested code blocks.
+- Encrypted interrupted-answer checkpoints, flushed atomic saves, manual retry with image reattachment, and healthy generation preserved through renderer crashes.
+- Windows C# recovery, canceled-shutdown handling, Ctrl+Alt shortcuts, DPAPI, startup behavior, installer identity and existing profile compatibility preserved.
+
+Validation on this laptop:
+
+| Check | Result |
+| --- | --- |
+| Unit/process/provider/controller tests | 68 passed; 0 failed, skipped or canceled. |
+| Dependency audit | 0 known vulnerabilities across production and development dependencies. |
+| C# helper build and capability/identity probe | Compiled; native probe test passed. |
+| Native recovery integration | Three fixtures could not prepare private-directory ACLs under the Codex sandbox account; these are failed/blocked checks, not claimed passes. |
+| Desktop and native encrypted restoration | Blocked before application startup by Electron's restricted-token read check and unavailable DPAPI under the separate Codex sandbox Windows account. No desktop pass is claimed. |
+| Windows x64 NSIS installer | Built successfully, unsigned. |
+| Packaged source | All 18 overlay files match the source byte-for-byte; helper included outside ASAR; test fixtures excluded. |
+| Installer SHA-256 | `b00b52f15b918fcdcc1e8761052b420006944b1b4d2e7ff8645cac265f63c33d` |
+| Installation in the owner's Windows session | Installed through the native Windows installer in `C:\Program Files\OpenCluely Overlay`; version 2.3.5.0; all 18 installed files match source. |
+| Installed UI and helper | Chat running; native helper running and UI reports automatic reopening on. Ten-image attachment control and independent app/code opacity controls observed. Public Desktop and Start-menu shortcuts present. |
+| Live provider access | Claude currently shows key setup required. No user API keys were supplied or live paid generation tested. All three provider integrations remain available. |
+
+Electron 44.7.0 was downloaded through the HTTPS npm mirror and verified against the checksum bundled in the pinned Electron npm package: `eee30dc8fa1f5ea95490e59f44e46ea68dd24c6e93d22facf70fe5c2d4c2665c`. Certificate verification remained enabled. Direct installation-folder writes remained denied after requesting filesystem access; the native computer-use tool successfully opened the installer in the desktop session. The installed app and native helper are running. Full automated desktop/helper/interruption checks should still be repeated from the owner's normal interactive Windows account. API keys must be entered there so DPAPI uses the correct Windows identity. No real API key or paid generation request was used during this port.
+
+## Historical Windows 2.3 validation
+
+The remaining record describes the earlier 17 October port, not new 2.3.5 test results on this laptop.
 
 Port prepared on 17 October 2026 from [ashokchilka99/mac-godsplan](https://github.com/ashokchilka99/mac-godsplan), reference commit [`f2b35228b67e0b22816ce779bc41c7503f24665d`](https://github.com/ashokchilka99/mac-godsplan/commit/f2b35228b67e0b22816ce779bc41c7503f24665d), the Mac 2.3 source. The Windows repository remains [ashokchilka99/opencluely-overlay](https://github.com/ashokchilka99/opencluely-overlay). This is a Windows adaptation; it does not package the Mac Swift helper or LaunchAgent.
 

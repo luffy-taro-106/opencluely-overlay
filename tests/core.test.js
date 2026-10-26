@@ -1,6 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { randomUUID } = require('node:crypto');
 const { DEFAULTS, validateSettings, validateQuestion, inspectImage, clampBounds, boundedContext, diskHistory, validateHistory } = require('../overlay/core');
 const { PROVIDERS, MODEL_CATALOG } = require('../overlay/models');
 
@@ -35,6 +36,30 @@ test('model menus include each provider default and still permit custom vision m
     assert.equal(validateSettings({models:{[provider]:'custom-vision-2026'}}).models[provider],'custom-vision-2026');
   }
 });
+test('code box opacity defaults to full opacity and migrates existing profiles independently', () => {
+  assert.equal(DEFAULTS.codeOpacity, 1);
+  assert.equal(validateSettings({}).codeOpacity, 1);
+  const { codeOpacity: _oldCodeOpacity, ...legacyProfile } = DEFAULTS;
+  const migrated = validateSettings({}, { ...legacyProfile, opacity: 0.25 });
+  assert.equal(migrated.codeOpacity, 1);
+  assert.equal(migrated.opacity, 0.25);
+
+  const current = { ...DEFAULTS, opacity: 0.4, codeOpacity: 0.6 };
+  assert.equal(validateSettings({ codeOpacity: 0.1 }, current).opacity, 0.4);
+  assert.equal(validateSettings({ opacity: 0.1 }, current).codeOpacity, 0.6);
+  assert.deepEqual(validateSettings({ opacity: 1, codeOpacity: 0.1 }, current), { ...current, opacity: 1, codeOpacity: 0.1 });
+  assert.equal(current.opacity, 0.4);
+  assert.equal(current.codeOpacity, 0.6);
+  assert.equal(DEFAULTS.opacity, 0.98);
+  assert.equal(DEFAULTS.codeOpacity, 1);
+});
+test('code box opacity accepts 10% through 100% and rejects invalid values', () => {
+  for (const codeOpacity of [0.1, 0.55, 1]) assert.equal(validateSettings({ codeOpacity }).codeOpacity, codeOpacity);
+  for (const codeOpacity of [NaN, Infinity, -Infinity, 0, 0.099, 1.001, undefined, null, '0.5', true, [], {}]) {
+    assert.throws(() => validateSettings({ codeOpacity }), /Code box opacity must be between 10% and 100%\./);
+  }
+  for (const opacity of [0.1, 1]) assert.equal(validateSettings({ opacity }).opacity, opacity);
+});
 test('image-only questions receive a clear default prompt; empty and oversized inputs fail', () => {
   assert.throws(() => validateQuestion({ text: '  ' }));
   assert.throws(() => validateQuestion({ text: 'x'.repeat(12001) }));
@@ -59,8 +84,49 @@ test('image validation checks actual format and dimensions before decoding', () 
 test('follow-ups include bounded complete pairs and recent images', () => {
   const history = Array.from({ length: 40 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: 'x'.repeat(2000), imageId: i % 2 ? null : `image${i}` }));
   const context = boundedContext(history, { text: 'follow up', imageId: 'current' }, id => ({ id }));
-  assert.equal(context.length, 17); assert.equal(context.filter(message => message.image).length, 3);
+  assert.equal(context.length, 17); assert.equal(context.filter(message => message.image).length, 9);
   assert.equal(context.at(-1).image.id, 'current'); assert.equal(context[0].role, 'user');
+});
+test('ten ordered images are accepted; eleven, duplicates and malformed IDs are rejected', () => {
+  const ids = Array.from({ length: 10 }, () => randomUUID());
+  assert.deepEqual(validateQuestion({ imageIds: ids }).imageIds, ids);
+  assert.throws(() => validateQuestion({ text: 'question', imageIds: [...ids, randomUUID()] }), /up to 10/);
+  assert.throws(() => validateQuestion({ text: 'question', imageIds: [ids[0], ids[0]] }), /Invalid attachment/);
+  assert.throws(() => validateQuestion({ text: 'question', imageIds: 'bad' }), /Invalid attachment/);
+  assert.throws(() => validateQuestion({ text: 'question', imageIds: ['file:///secret'] }), /Invalid attachment/);
+});
+test('ten-image follow-ups retain count and byte bounds with names for unavailable pixels', () => {
+  const ids = Array.from({ length: 10 }, () => randomUUID());
+  const names = ids.map((_id, i) => `image-${i}.png`);
+  const lookup = id => ({ id, data: 'cGl4ZWxz', mime: 'image/jpeg' });
+  const history = [{ id: 'user', role: 'user', text: 'Compare these', imageIds: ids, imageNames: names }, { id: 'answer', role: 'assistant', text: 'Answer' }];
+  const followup = boundedContext(history, { text: 'Explain' }, lookup);
+  assert.deepEqual(followup[0].images.map(image => image.id), ids);
+  const next = boundedContext(history, { text: 'Compare again', imageIds: ids }, lookup);
+  assert.equal(next[0].images.length + next.at(-1).images.length, 10);
+  assert.equal(next[0].images.length, 0, 'Current attachments reserve all ten context slots');
+  assert.deepEqual(next.at(-1).images.map(image => image.id), ids);
+  for (const name of names) assert.ok(next[0].text.includes(name));
+  const partial = boundedContext(history, { text: 'Compare two more', imageIds: ids.slice(0, 2) }, lookup);
+  assert.equal(partial[0].images.length, 8);
+  assert.equal(partial.at(-1).images.length, 2);
+  for (const name of names.slice(8)) assert.ok(partial[0].text.includes(name));
+  const restored = boundedContext(validateHistory(diskHistory(history)), { text: 'Explain' }, lookup);
+  assert.equal(restored[0].images.length, 0);
+  for (const name of names) assert.ok(restored[0].text.includes(name));
+  const huge = () => ({ data: Buffer.alloc(4 * 1024 * 1024).toString('base64') });
+  const bounded = boundedContext(history, { text: 'New', imageIds: ids.slice(0, 5) }, huge);
+  assert.equal(bounded[0].images.length, 0, 'Current images reserve the 20 MiB budget');
+  assert.equal(bounded.at(-1).images.length, 5);
+  const historicalOnly = boundedContext(history, { text: 'Explain the images' }, huge);
+  assert.equal(historicalOnly[0].images.length, 5, 'Historical pixels remain limited to 20 MiB');
+  for (const name of names.slice(5)) assert.ok(historicalOnly[0].text.includes(name));
+  const allCurrent = boundedContext(history, { text: 'New', imageIds: ids }, huge);
+  assert.equal(allCurrent[0].images.length, 0);
+  assert.equal(allCurrent.at(-1).images.length, 10, 'Selected current images are never silently dropped');
+  const saved = validateHistory(diskHistory(history));
+  assert.deepEqual(saved[0].imageNames, names);
+  assert.throws(() => validateHistory([{ ...saved[0], imageNames: [...names, 'overflow.png'] }, saved[1]]), /Invalid conversation data/);
 });
 test('disk history contains no image pixels or API keys and rejects malformed pairs', () => {
   const history = [{ id: '1', role: 'user', text: 'hello', imageId: 'secret', data: 'pixel' }, { id: '2', role: 'assistant', text: 'hi', apiKey: 'private' }];

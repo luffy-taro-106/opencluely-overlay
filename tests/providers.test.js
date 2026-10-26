@@ -44,6 +44,19 @@ test('provider adapters keep keys in headers and send images in native formats',
   assert.equal(openai.body.input[0].content[1].type,'input_text');
   assert.equal(openai.body.input[1].content[0].type,'output_text');
 });
+test('all provider adapters send all ten images in order exactly once', () => {
+  const images = Array.from({ length: 10 }, (_value, i) => ({ mime: 'image/jpeg', data: `pixels-${i}` }));
+  const messages = [{ role: 'user', text: 'Compare all images', images, image: images[0] }, { role: 'assistant', text: 'Answer', images }];
+  const claude = buildRequest('anthropic', 'test', 'secret', messages).body.messages;
+  assert.deepEqual(claude[0].content.filter(part => part.type === 'image').map(part => part.source.data), images.map(image => image.data));
+  assert.equal(claude[1].content.length, 1);
+  const gemini = buildRequest('gemini', 'test', 'secret', messages).body.contents;
+  assert.deepEqual(gemini[0].parts.filter(part => part.inlineData).map(part => part.inlineData.data), images.map(image => image.data));
+  assert.equal(gemini[1].parts.length, 1);
+  const openai = buildRequest('openai', 'test', 'secret', messages).body.input;
+  assert.deepEqual(openai[0].content.filter(part => part.type === 'input_image').map(part => part.image_url), images.map(image => `data:image/jpeg;base64,${image.data}`));
+  assert.equal(openai[1].content.length, 1);
+});
 test('OpenAI Responses streams text, ignores reasoning, and requires terminal events', async () => {
   const run = text => streamAnswer({...options,provider:'openai',model:'gpt-6.1-sol',fetchImpl:async()=>response(text,1)});
   const delta = frame({type:'response.output_text.delta',delta:'Hello 🌿'});

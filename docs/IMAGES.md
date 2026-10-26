@@ -1,0 +1,11 @@
+# Image attachments
+
+The chat window has no logo, OpenCluely heading, Desktop Assistant label, welcome illustration or slogans. Functional controls, settings, provider/model labels and conversation content remain. The window title is Chat. The app's installed bundle, profile location and recovery identity stay compatible with existing saved data.
+
+Attach up to ten PNG/JPEG images to one question. The file picker supports multiple selection; paste and drag/drop accept multiple images; repeated captures append to the same list. The list shows the count, filename, dimensions, a preview, individual removal and Remove all. An eleventh image is rejected without replacing the selected images. Source files are limited to 10 MB each, decoded dimensions are checked, and each processed image is resized to at most 2560 pixels on its longest edge and 4 MiB. Import batches roll back newly added images on failure.
+
+The main process validates the image count and IDs independently of the UI. All selected images are sent once, in order, in the chosen provider's image format. Current attachments are always included and may total up to 40 MiB of processed image data. Recent follow-ups add historical pixels only while the combined context remains within ten images and 20 MiB; older or unavailable images are identified by name. The in-memory cache protects queued images and every image in an active request from eviction. No extra background worker or service is added.
+
+Saved conversations and interrupted-answer checkpoints keep attachment names, never image pixels. Legacy single-image history and version-1 checkpoints still load. After main-process termination, restored image questions require the owner to attach the original images again. A renderer crash restores queued previews from the live main process.
+
+The Windows unit checks cover accepting ten attachments and rejecting eleven, ordered payloads for all three providers, historical count/byte bounds, names-only saved history and interrupted-answer restoration, and legacy single-image checkpoints. Desktop checks cover file selection, paste/drop, individual removal, overflow, cache pressure, queued renderer recovery, encrypted names, follow-ups and independent opacity. See the current [Windows verification record](WINDOWS-PORT.md). Provider generation is mocked in automated checks.

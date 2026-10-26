@@ -6,33 +6,46 @@ const path = require('node:path');
 const os = require('node:os');
 const { randomUUID } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
-const { DEFAULTS, MAX_IMAGE_BYTES, validateSettings, validateQuestion, inspectImage, clampBounds, boundedContext, diskHistory, validateHistory } = require('./core');
-const { streamAnswer, validateApiKey } = require('./providers');
+const { DEFAULTS, MAX_IMAGE_BYTES, MAX_IMAGES, imageIds, imageNames, validateSettings, validateQuestion, inspectImage, clampBounds, boundedContext, diskHistory, validateHistory } = require('./core');
+const { streamAnswer, validateApiKey, listProviderModels } = require('./providers');
 const { Store } = require('./storage');
+const { InterruptedWork } = require('./interrupted-work');
 const { QuitGuard } = require('./quit-guard');
 const { WindowsRecovery, recoverySession } = require('./recovery');
-const { MODEL_CATALOG, PROVIDERS, PROVIDER_NAMES } = require('./models');
+const { MODEL_CATALOG, PROVIDERS, PROVIDER_NAMES, EFFORTS, validModelId, modelDetails } = require('./models');
 const { platformInfo, shortcutLabel, loginOptions, startHidden, startupAvailable } = require('./platform');
 const platform = platformInfo();
+const { WindowsPanel } = require('./windows-panel');
 
 const quitTestMode = !app.isPackaged && process.argv.includes('--quit-smoke-test');
-const testMode = !app.isPackaged && (process.argv.includes('--smoke-test') || quitTestMode);
-if (testMode) app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'opencluely-test-')));
+const interruptionTestMode = !app.isPackaged && process.argv.includes('--interruption-smoke-test');
+const testMode = !app.isPackaged && (process.argv.includes('--smoke-test') || quitTestMode || interruptionTestMode);
+if (interruptionTestMode) {
+  const profile = path.resolve(process.argv.at(-1));
+  const info = fs.lstatSync(profile);
+  if (path.dirname(profile) !== fs.realpathSync(os.tmpdir()) || !path.basename(profile).startsWith('opencluely-interruption-test-') ||
+    !info.isDirectory() || info.isSymbolicLink()) throw new Error('Interruption tests require a disposable profile.');
+  app.setPath('userData', profile);
+} else if (testMode) app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'opencluely-test-')));
 app.setName('OpenCluely Overlay');
 if (process.platform === 'win32') app.setAppUserModelId('com.opencluely.overlay');
 
 let win, tray, store, quitting = false, settings, keys = {}, history = [], active = null, lastAttempt = null;
 let passThrough = false, captureBusy = false, settingsBusy = false, geometryTimer, normalBounds;
+let panel = null;
 let screenshotRestore = true;
 let launchHidden = false;
-let recovery, initializationComplete = false;
+let recovery, interruptedWork, initializationComplete = false;
 let recoveryBeforeSessionEnd = false;
 let archivedChats = [];
 const images = new Map(), warnings = [], recoveryTimes = [], shortcuts = [];
+const draftImageIds = new Set();
 const html = path.join(__dirname, 'ui', 'index.html');
 const pageURL = pathToFileURL(html).href;
 let answerFunction = streamAnswer;
 let keyValidator = validateApiKey;
+let modelLister = listProviderModels;
+const modelCatalog = structuredClone(MODEL_CATALOG), modelStatus = {}, modelRefreshes = new Map();
 let screenPermissionFunction = () => platform.mac ? systemPreferences.getMediaAccessStatus('screen') : 'granted';
 let quitConfirmationFunction = async () => {
   showOverlay(true);
@@ -86,11 +99,13 @@ function canStartAtLogin() {
 function screenPermission() { return screenPermissionFunction(); }
 function currentState() {
   return {
-    settings, history: diskHistory(history), passThrough, busy: !!active, captureBusy,
-    active: active ? { id: active.id, question: active.question, text: active.text, image: active.image ? publicImage(active.image) : null, provider: active.provider, model: active.model } : null,
-    lastAttempt: lastAttempt ? { ...lastAttempt, image: images.has(lastAttempt.question.imageId) ? publicImage(images.get(lastAttempt.question.imageId)) : null } : null,
+    settings, history: diskHistory(history), passThrough, panelBehavior: panel?.status() || { available: false, preventsActivation: false }, busy: !!active, captureBusy,
+    active: active ? { id: active.id, question: active.question, text: active.text, images: active.images.map(publicImage), provider: active.provider, model: active.model } : null,
+    lastAttempt: lastAttempt ? { ...lastAttempt, images: imageIds(lastAttempt.question).map(id => images.get(id)).filter(Boolean).map(publicImage) } : null,
+    maxImages: MAX_IMAGES,
+    draftImages: [...draftImageIds].map(id => images.get(id)).filter(Boolean).map(publicImage),
     keyStatus: Object.fromEntries(PROVIDERS.map(provider => [provider, !!keys[provider]])),
-    modelCatalog: MODEL_CATALOG,
+    modelCatalog, modelStatus,
     archivedChats: archivedChats.map(({ id, title, updatedAt }) => ({ id, title, updatedAt })),
     secureStorage: store.available(), warnings, shortcuts, platform,
     captureProtectionActive: !!win && !win.isDestroyed() && win.isContentProtected(),
@@ -101,6 +116,54 @@ function currentState() {
   };
 }
 function syncState() { emit({ type: 'state', value: currentState() }); updateTray(); }
+
+function persistModelCatalog() {
+  try {
+    store.write('model-catalog.json', Object.fromEntries(PROVIDERS.filter(provider => keys[provider] && modelStatus[provider]?.checkedAt)
+      .map(provider => [provider, { models: modelCatalog[provider], total: modelStatus[provider].total, checkedAt: modelStatus[provider].checkedAt }])));
+  } catch { warn('The refreshed model list could not be cached. It is available until you quit.'); }
+}
+function restoreModelCatalog() {
+  const cached = store.read('model-catalog.json', {});
+  for (const provider of PROVIDERS) {
+    const entry = cached?.[provider];
+    if (!keys[provider] || !entry || !Array.isArray(entry.models) || entry.models.length > 1000 || !Number.isFinite(entry.total) || !Number.isFinite(Date.parse(entry.checkedAt))) continue;
+    if (!entry.models.every(model => model && validModelId(model.id) && typeof model.name === 'string' && model.name.length <= 250 &&
+      Array.isArray(model.reasoningEfforts) && model.reasoningEfforts.every(value => EFFORTS.includes(value) && value !== 'auto') &&
+      [null, 'effort', 'thinkingLevel', 'thinkingBudget'].includes(model.reasoningMode) && [null, 'adaptive', 'enabled'].includes(model.thinking) && typeof model.vision === 'boolean')) continue;
+    modelCatalog[provider] = entry.models;
+    modelStatus[provider] = { source: 'cached', total: entry.total, checkedAt: entry.checkedAt, refreshing: false, error: '' };
+  }
+}
+async function refreshModels(provider = null) {
+  if (provider !== null && !PROVIDERS.includes(provider)) throw new Error('Choose a valid AI provider.');
+  await Promise.all((provider ? [provider] : PROVIDERS).map(async selected => {
+    const apiKey = keys[selected];
+    if (!apiKey) return;
+    if (modelRefreshes.get(selected)?.apiKey === apiKey) return modelRefreshes.get(selected).promise;
+    const task = { apiKey };
+    modelStatus[selected] = { ...modelStatus[selected], refreshing: true, error: '' };
+    task.promise = (async () => {
+      try {
+        const result = await modelLister(selected, apiKey);
+        if (keys[selected] !== apiKey) return;
+        modelCatalog[selected] = result.models;
+        modelStatus[selected] = { source: 'live', total: result.total, checkedAt: result.checkedAt, refreshing: false, error: '' };
+        persistModelCatalog();
+      } catch (error) {
+        if (keys[selected] !== apiKey) return;
+        modelStatus[selected] = { ...modelStatus[selected], refreshing: false, error: error.message };
+      } finally {
+        if (modelRefreshes.get(selected) === task) modelRefreshes.delete(selected);
+        if (!quitting) syncState();
+      }
+    })();
+    modelRefreshes.set(selected, task);
+    syncState();
+    return task.promise;
+  }));
+  return currentState();
+}
 async function setRecoveryEnabled(enabled) {
   if (typeof enabled !== 'boolean') throw new Error('Choose whether automatic reopening is on or off.');
   if (!recovery?.available) throw new Error('Automatic reopening is available in the installed Windows app.');
@@ -109,12 +172,13 @@ async function setRecoveryEnabled(enabled) {
 }
 function manualReopen() {
   if (!settings || quitting) return;
-  showOverlay(true);
+  showOverlay(false);
   if (initializationComplete && recovery?.available && !recovery.enabled && !recovery.busy) {
     void recovery.enable().catch(() => {});
   }
 }
 function allowSessionEnd(terminal = true) {
+  interruptedWork?.flush();
   if (!quitGuard.sessionEnding) recoveryBeforeSessionEnd = !!recovery?.enabled || recovery?.shouldResumeAfterSessionEnd?.() === true;
   quitGuard.allowSessionEnd(); recovery?.disarmForSessionEnd({ terminal });
 }
@@ -133,7 +197,12 @@ function persistHistory() {
       store.write('chats.enc', { current: diskHistory(history), archive: archivedChats }, true);
       store.write('conversation.enc', diskHistory(history), true);
     } else { store.remove('conversation.enc'); store.remove('chats.enc'); }
-  } catch { warn('The conversation could not be saved. It is still available until you quit.'); }
+    return true;
+  } catch { warn('The conversation could not be saved. It is still available until you quit.'); return false; }
+}
+function clearInterruptedWork() {
+  try { interruptedWork?.clear(); }
+  catch { warn('The saved unfinished answer could not be removed. Check available storage and try again.'); }
 }
 function changeConversation(archiveId = null) {
   if (active) throw new Error('Stop the current answer before starting or switching chats.');
@@ -149,7 +218,8 @@ function changeConversation(archiveId = null) {
   if (settings.rememberHistory && store.available()) {
     store.write('chats.enc', { current: diskHistory(nextHistory), archive: nextArchives }, true);
   }
-  archivedChats = nextArchives; history = nextHistory; images.clear(); lastAttempt = null;
+  archivedChats = nextArchives; history = nextHistory; images.clear(); draftImageIds.clear(); lastAttempt = null;
+  clearInterruptedWork();
   persistHistory();
   syncState(); return currentState();
 }
@@ -166,26 +236,32 @@ function applyWindowMode() {
   try { win.setContentProtection(settings.hideFromCapture); }
   catch { warn('Screen capture protection could not be enabled. Check Settings and your sharing preview before sharing.'); }
   win.setAlwaysOnTop(true, 'screen-saver');
-  win.setOpacity(settings.opacity);
+  // Renderer layers control opacity so code boxes never inherit the app fade.
+  win.setOpacity(1);
   win.setIgnoreMouseEvents(passThrough, { forward: true });
-  if (passThrough && platform.mac && win.isFocused()) win.blur();
-  win.setFocusable(!passThrough);
+  panel?.apply(passThrough);
 }
 function showOverlay(focus = false) {
   if (!win || win.isDestroyed()) createWindow();
-  if (focus) passThrough = false;
+  if (focus) { passThrough = false; panel?.apply(false); panel?.allowKeyboard(); }
+  else if (!win.isFocused()) panel?.releaseKeyboard();
   applyWindowMode(); fitWindow();
   if (win.isMinimized()) win.restore();
-  if (focus) { win.show(); win.focus(); emit({ type: 'focus-input' }); }
+  if (focus) { win.show(); win.focus(); }
   else win.showInactive();
   syncState();
+  if (focus) emit({ type: 'focus-input' });
 }
-function hideOverlay() { screenshotRestore = false; if (win && !win.isDestroyed()) win.hide(); updateTray(); }
-function toggleVisibility() { if (win?.isVisible()) hideOverlay(); else showOverlay(true); }
+function hideOverlay() {
+  screenshotRestore = false;
+  if (win && !win.isDestroyed()) { win.hide(); panel?.releaseKeyboard(); applyWindowMode(); }
+  syncState();
+}
+function toggleVisibility() { if (win?.isVisible()) hideOverlay(); else showOverlay(false); }
 function togglePassThrough() {
   passThrough = !passThrough;
   applyWindowMode(); syncState();
-  if (!passThrough) showOverlay(true);
+  if (!passThrough) showOverlay(false);
   return passThrough;
 }
 function saveGeometry() {
@@ -210,12 +286,13 @@ function toggleCompact() {
 }
 function recoverRenderer(reason) {
   if (quitting || !win || win.isDestroyed()) return;
-  active?.controller.abort();
+  // Provider requests and their checkpoints live in main. A renderer crash
+  // should not interrupt a healthy request; the reloaded UI receives its state.
   const now = Date.now();
   recoveryTimes.push(now);
   while (recoveryTimes[0] < now - 60000) recoveryTimes.shift();
   log(`renderer-recovery:${reason}`);
-  passThrough = false; applyWindowMode();
+  passThrough = false; panel?.releaseKeyboard(); applyWindowMode();
   if (recoveryTimes.length <= 3) win.reload();
   else {
     hideOverlay();
@@ -228,12 +305,13 @@ function createWindow() {
   normalBounds = clampBounds(saved, display.workArea, false);
   win = new BrowserWindow({
     ...clampBounds(saved, display.workArea, settings.compact), minWidth: 360, minHeight: settings.compact ? 122 : 440,
-    title: 'OpenCluely Overlay', icon: path.join(__dirname, 'assets', 'icon.png'),
-    frame: false, transparent: false, backgroundColor: '#111a18', show: false,
-    ...(platform.mac ? { type: 'panel', hiddenInMissionControl: true } : {}),
+    title: 'Chat',
+    frame: false, transparent: true, backgroundColor: '#00000000', show: false, focusable: process.platform !== 'win32',
+    ...(platform.mac ? { type: 'panel', hiddenInMissionControl: true, acceptFirstMouse: true } : {}),
     alwaysOnTop: true, skipTaskbar: true, autoHideMenuBar: true, maximizable: false, fullscreenable: false,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), partition: 'overlay-memory', nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, backgroundThrottling: true, spellcheck: false }
   });
+  panel = new WindowsPanel(win);
   // The app is already an accessory. Avoid process transformations that flash/hide the window.
   if (platform.mac) win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
   applyWindowMode();
@@ -256,7 +334,11 @@ function createWindow() {
   }
   win.on('closed', () => { win = null; });
   win.on('move', saveGeometry); win.on('resize', saveGeometry);
-  if (platform.mac) win.on('focus', syncState);
+  win.on('blur', () => {
+    if (quitting || !win || win.isDestroyed()) return;
+    panel?.handleBlur(syncState);
+  });
+  win.on('focus', () => { if (!quitting && settings && store) syncState(); });
   win.webContents.on('did-finish-load', () => syncState());
   win.webContents.on('did-fail-load', (_event, code) => { if (code !== -3) { warn('The overlay could not load. Quit and reopen from the tray.'); } });
   win.once('ready-to-show', () => { if (!testMode && !launchHidden) win.showInactive(); });
@@ -271,7 +353,7 @@ function updateTray() {
     { type: 'separator' },
     { label: 'Click-through', type: 'checkbox', checked: passThrough, click: togglePassThrough },
     { label: 'Compact view', type: 'checkbox', checked: settings.compact, click: toggleCompact },
-    { label: 'Settings', click: () => { showOverlay(true); emit({ type: 'open-settings' }); } },
+    { label: 'Settings', click: () => { showOverlay(false); emit({ type: 'open-settings' }); } },
     ...(platform.mac ? [{ label: 'Screen Recording permission…', click: () => { void openScreenSettings().catch(() => {}); } }] : []),
     ...(recovery?.available ? [{ label: 'Reopen automatically', type: 'checkbox', checked: recovery.enabled, enabled: !recovery.busy,
       click: item => { void setRecoveryEnabled(item.checked).catch(error => emit({ type: 'notice', text: error.message })); } }] : []),
@@ -291,13 +373,14 @@ function addImage(native, name) {
   const size = resized.getSize();
   const preview = resized.resize({ width: Math.min(260, size.width), quality: 'good' }).toDataURL();
   const image = { id: randomUUID(), name: String(name || 'Image').slice(0, 160), mime: 'image/jpeg', data: bytes.toString('base64'), preview, ...size };
-  images.set(image.id, image);
-  // Keep a bounded image cache. Old image names remain in history but pixels are released.
-  while (images.size > 10) {
-    const removable = [...images.keys()].find(id => id !== active?.question.imageId && id !== image.id);
-    if (!removable) break;
+  // Composer attachments and all images in a running request must survive
+  // cache eviction. Older history retains attachment names after pixels expire.
+  while (images.size >= MAX_IMAGES * 2) {
+    const removable = [...images.keys()].find(id => !imageIds(active?.question).includes(id) && !draftImageIds.has(id));
+    if (!removable) throw new Error('Image memory is full. Finish the answer or remove a queued image first.');
     images.delete(removable);
   }
+  images.set(image.id, image);
   return publicImage(image);
 }
 function importImage(input) {
@@ -343,28 +426,36 @@ async function ask(input) {
   const question = validateQuestion(input);
   const provider = settings.provider, model = settings.models[provider], apiKey = keys[provider];
   if (!apiKey) throw new Error(`Add your ${PROVIDER_NAMES[provider]} API key in Settings first.`);
-  const image = question.imageId ? images.get(question.imageId) : null;
-  if (question.imageId && !image) throw new Error('This attachment expired. Please attach the image again.');
-  const request = { id: randomUUID(), question, image, provider, model, text: '', controller: new AbortController() };
+  const attachments = question.imageIds.map(id => images.get(id));
+  if (attachments.some(image => !image)) throw new Error('An attachment expired. Please attach the missing image again.');
+  const modelInfo = modelCatalog[provider].find(item => item.id === model) || modelDetails(provider, model);
+  if (!modelInfo.vision && attachments.length) throw new Error('This model accepts text only. Select a vision model for images.');
+  const savedEffort = settings.reasoningEfforts[provider]?.[model] || 'auto';
+  const reasoningEffort = modelInfo.reasoningEfforts.includes(savedEffort) ? savedEffort : 'auto';
+  const request = { id: randomUUID(), question, images: attachments, provider, model, text: '', controller: new AbortController() };
   active = request; lastAttempt = null;
-  emit({ type: 'start', id: request.id, question, image: image ? publicImage(image) : null, provider, model });
+  interruptedWork.start(request, history);
+  emit({ type: 'start', id: request.id, question, images: attachments.map(publicImage), provider, model });
   updateTray();
   // Returning immediately lets the UI cancel while the stream is running.
   void (async () => {
     try {
-      const answer = await answerFunction({ provider, model, apiKey, messages: boundedContext(history, question, id => images.get(id)), signal: request.controller.signal,
-        onDelta: delta => { request.text += delta; emit({ type: 'delta', id: request.id, text: delta }); },
+      const answer = await answerFunction({ provider, model, apiKey, reasoningEffort, modelInfo, messages: boundedContext(history, question, id => images.get(id)), signal: request.controller.signal,
+        onDelta: delta => { request.text += delta; interruptedWork.update(request, history); emit({ type: 'delta', id: request.id, text: delta }); },
         onStatus: text => emit({ type: 'status', id: request.id, text }) });
       request.controller.signal.throwIfAborted();
+      request.text = answer.text;
+      interruptedWork.start(request, history);
       const createdAt = new Date().toISOString();
-      history.push({ id: randomUUID(), role: 'user', text: question.text, imageId: question.imageId, imageName: image?.name, createdAt },
+      history.push({ id: randomUUID(), role: 'user', text: question.text, imageId: question.imageId, imageIds: question.imageIds, imageName: attachments[0]?.name, imageNames: attachments.map(image => image.name), createdAt },
         { id: request.id, role: 'assistant', text: answer.text, provider, model, createdAt });
       history = history.slice(-40);
-      persistHistory();
+      if (persistHistory()) clearInterruptedWork();
       emit({ type: 'done', id: request.id, text: answer.text, truncated: answer.truncated });
     } catch (error) {
       const message = request.controller.signal.aborted ? 'Answer stopped. You can retry when you are ready.' : error.message;
-      lastAttempt = { id: request.id, question, text: request.text, error: message, provider, model };
+      lastAttempt = { id: request.id, question, text: request.text, error: message, provider, model, imageNames: attachments.map(image => image.name) };
+      interruptedWork.start(request, history);
       emit({ type: 'error', ...lastAttempt }); log('request-failed');
     } finally {
       if (active === request) active = null;
@@ -380,6 +471,12 @@ async function saveSettings(input) {
   settingsBusy = true;
   try {
     const next = validateSettings(input, settings);
+    for (const [provider, choices] of Object.entries(input.reasoningEfforts || {})) {
+      for (const [model, effort] of Object.entries(choices)) {
+        const info = modelCatalog[provider].find(item => item.id === model) || modelDetails(provider, model);
+        if (effort !== 'auto' && !info.reasoningEfforts.includes(effort)) throw new Error('This model does not support the selected reasoning effort.');
+      }
+    }
     if (next.rememberHistory && !store.available()) throw new Error('Secure storage is unavailable. Turn off conversation history to save preferences.');
     const nextKeys = { ...keys };
     let replacementKey = '';
@@ -403,6 +500,7 @@ async function saveSettings(input) {
     if (!('compact' in input)) next.compact = settings.compact;
     const hadCredentials = fs.existsSync(path.join(store.directory, 'credentials.enc'));
     try {
+      if (!next.rememberHistory) interruptedWork.clear();
       if (credentialsChanged) store.write('credentials.enc', nextKeys, true);
       if (startupChanged) {
         app.setLoginItemSettings(loginOptions(next.launchAtLogin, process.execPath));
@@ -418,6 +516,13 @@ async function saveSettings(input) {
       throw error;
     }
     settings = next; keys = nextKeys;
+    if (credentialsChanged) {
+      modelCatalog[next.provider] = structuredClone(MODEL_CATALOG[next.provider]);
+      delete modelStatus[next.provider];
+      persistModelCatalog();
+      if (replacementKey && !testMode) void refreshModels(next.provider);
+    }
+    if (settings.rememberHistory && lastAttempt) interruptedWork.start(lastAttempt, history);
     applyWindowMode(); persistHistory(); syncState();
     return currentState();
   } finally { settingsBusy = false; }
@@ -435,31 +540,55 @@ async function openScreenSettings() {
   await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
   return true;
 }
+function requestKeyboardFocus(field = 'question') {
+  if (!['question', 'apiKey', 'model'].includes(field)) throw new Error('Choose an editable overlay field.');
+  if (!win || win.isDestroyed() || !win.isVisible() || passThrough) throw new Error('Show the overlay and turn off click-through before typing.');
+  panel?.allowKeyboard(); applyWindowMode(); win.focus(); win.webContents.focus(); syncState();
+  return currentState();
+}
 function registerIPC() {
   handle('state', currentState); handle('ask', ask);
+  handle('focus-field', requestKeyboardFocus);
   handle('cancel', () => { active?.controller.abort(); return true; });
-  handle('upload', async () => {
-    const result = await dialog.showOpenDialog(win, { title: 'Attach a question image', properties: ['openFile'], filters: [{ name: 'Question images', extensions: ['png', 'jpg', 'jpeg'] }] });
-    if (result.canceled || !result.filePaths[0]) return null;
-    const file = result.filePaths[0];
-    if (fs.statSync(file).size > MAX_IMAGE_BYTES) throw new Error('Choose an image up to 10 MB.');
-    const bytes = fs.readFileSync(file); inspectImage(bytes);
-    return addImage(nativeImage.createFromBuffer(bytes), path.basename(file));
+  handle('set-attachments', ids => {
+    const question = validateQuestion({ text: 'attachments', imageIds: ids });
+    if (question.imageIds.some(id => !images.has(id))) throw new Error('An attachment expired. Attach the image again.');
+    draftImageIds.clear(); for (const id of question.imageIds) draftImageIds.add(id);
+    return true;
+  });
+  handle('upload', async (limit = MAX_IMAGES) => {
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_IMAGES) throw new Error(`Attach up to ${MAX_IMAGES} images per question.`);
+    const result = await dialog.showOpenDialog(win, { title: 'Attach images', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Question images', extensions: ['png', 'jpg', 'jpeg'] }] });
+    if (result.canceled || !result.filePaths.length) return [];
+    if (result.filePaths.length > limit) throw new Error(`Choose up to ${limit} more image${limit === 1 ? '' : 's'}.`);
+    const selected = result.filePaths.map(file => {
+      if (fs.statSync(file).size > MAX_IMAGE_BYTES) throw new Error('Choose images up to 10 MB each.');
+      const bytes = fs.readFileSync(file); inspectImage(bytes);
+      return { native: nativeImage.createFromBuffer(bytes), name: path.basename(file) };
+    });
+    const added = [];
+    try { for (const item of selected) added.push(addImage(item.native, item.name)); return added; }
+    catch (error) { for (const item of added) images.delete(item.id); throw error; }
   });
   handle('paste-image', async () => {
-    for (const item of await clipboard.read()) {
-      const mime = item.types.find(type => ['image/png', 'image/jpeg'].includes(type));
-      if (!mime) continue;
-      const blob = await item.getType(mime);
-      if (blob.size > MAX_IMAGE_BYTES) throw new Error('Choose a PNG or JPEG up to 10 MB.');
-      const bytes = Buffer.from(await blob.arrayBuffer()); inspectImage(bytes);
-      return addImage(nativeImage.createFromBuffer(bytes), 'Clipboard image');
-    }
-    return null;
+    const added = [];
+    try {
+      for (const item of await clipboard.read()) {
+        const mime = item.types.find(type => ['image/png', 'image/jpeg'].includes(type));
+        if (!mime) continue;
+        const blob = await item.getType(mime);
+        if (blob.size > MAX_IMAGE_BYTES) throw new Error('Choose a PNG or JPEG up to 10 MB.');
+        const bytes = Buffer.from(await blob.arrayBuffer()); inspectImage(bytes);
+        if (added.length >= MAX_IMAGES) throw new Error(`Attach up to ${MAX_IMAGES} images per question.`);
+        added.push(addImage(nativeImage.createFromBuffer(bytes), 'Clipboard image'));
+      }
+      return added;
+    } catch (error) { for (const item of added) images.delete(item.id); throw error; }
   });
   handle('import-image', importImage); handle('capture', capture);
-  handle('release-image', id => { if (typeof id === 'string' && !history.some(message => message.imageId === id) && active?.question.imageId !== id && lastAttempt?.question.imageId !== id) images.delete(id); return true; });
+  handle('release-image', id => { draftImageIds.delete(id); if (typeof id === 'string' && !history.some(message => imageIds(message).includes(id)) && !imageIds(active?.question).includes(id) && !imageIds(lastAttempt?.question).includes(id)) images.delete(id); return true; });
   handle('save-settings', saveSettings);
+  handle('refresh-models', refreshModels);
   handle('screen-settings', openScreenSettings);
   handle('set-recovery-enabled', setRecoveryEnabled);
   handle('new-chat', () => changeConversation());
@@ -473,14 +602,15 @@ function registerIPC() {
   handle('clear', () => {
     if (active) throw new Error('Stop the answer before clearing the conversation.');
     // Remove the saved file first, so a disk failure does not falsely report deletion.
+    interruptedWork.clear();
     if (settings.rememberHistory && store.available()) store.write('chats.enc', { current: [], archive: archivedChats }, true);
-    store.remove('conversation.enc'); history = []; lastAttempt = null; images.clear(); syncState(); return true;
+    store.remove('conversation.enc'); history = []; lastAttempt = null; images.clear(); draftImageIds.clear(); syncState(); return true;
   });
   handle('export', async () => {
     if (!history.length) throw new Error('There is no completed conversation to export.');
     const result = await dialog.showSaveDialog(win, { title: 'Export conversation', defaultPath: 'OpenCluely-conversation.md', filters: [{ name: 'Markdown', extensions: ['md'] }] });
     if (result.canceled || !result.filePath) return false;
-    const content = history.map(message => `## ${message.role === 'user' ? 'You' : 'Assistant'}\n\n${message.imageName ? `[Image: ${message.imageName}]\n\n` : ''}${message.text}\n`).join('\n');
+    const content = history.map(message => `## ${message.role === 'user' ? 'You' : 'Assistant'}\n\n${imageNames(message).map(name => `[Image: ${name}]\n\n`).join('')}${message.text}\n`).join('\n');
     fs.writeFileSync(result.filePath, content, 'utf8'); return true;
   });
   handle('hide', hideOverlay); handle('pass-through', togglePassThrough); handle('compact', toggleCompact);
@@ -490,9 +620,10 @@ function registerIPC() {
 function registerShortcuts() {
   const commands = [
     ['CommandOrControl+Alt+Space', 'Show / hide', toggleVisibility],
+    ['CommandOrControl+Alt+T', 'Type a question', () => showOverlay(true)],
     ['CommandOrControl+Alt+I', 'Click-through', togglePassThrough],
     ['CommandOrControl+Alt+S', 'Screenshot', async () => {
-      try { const image = await capture(); showOverlay(true); emit({ type: 'attach', image }); }
+      try { if (draftImageIds.size >= MAX_IMAGES) throw new Error(`Attach up to ${MAX_IMAGES} images per question. Remove one before taking another screenshot.`); const image = await capture(); showOverlay(false); emit({ type: 'attach', image }); }
       catch (error) { showOverlay(false); emit({ type: 'notice', text: error.message }); }
     }]
   ];
@@ -539,6 +670,7 @@ async function initialize() {
   if (!store.available()) { settings.rememberHistory = false; warn('Secure storage is unavailable. API keys and history cannot be saved.'); }
   const credentials = store.read('credentials.enc', {}, true);
   for (const provider of PROVIDERS) if (typeof credentials?.[provider] === 'string' && credentials[provider].length <= 500) keys[provider] = credentials[provider];
+  restoreModelCatalog();
   if (settings.rememberHistory) {
     try { history = validateHistory(store.read('conversation.enc', [], true)); }
     catch { warn('Saved conversation could not be restored.'); }
@@ -552,6 +684,9 @@ async function initialize() {
       if (saved !== null) history = validateHistory(saved.current);
     } catch { warn('Previous chats could not be restored. The original file is preserved until the next successful save.'); }
   }
+  interruptedWork = new InterruptedWork({ store, enabled: () => settings.rememberHistory && store.available(), report: warn });
+  // Temporary Keychain unavailability must not delete an existing checkpoint.
+  lastAttempt = store.available() ? interruptedWork.restore(history) : null;
   const overlaySession = session.fromPartition('overlay-memory');
   overlaySession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   overlaySession.setPermissionCheckHandler(() => false);
@@ -562,7 +697,7 @@ async function initialize() {
   if (platform.mac) trayImage.setTemplateImage(true);
   tray = new Tray(trayImage);
   tray.setToolTip(`OpenCluely Overlay — ${shortcutLabel('CommandOrControl+Alt+Space')}`);
-  if (!platform.mac) tray.on('click', () => showOverlay(true));
+  if (!platform.mac) tray.on('click', () => showOverlay(false));
   updateTray();
   registerIPC(); registerShortcuts();
   for (const event of ['display-added', 'display-removed', 'display-metrics-changed']) screen.on(event, () => { fitWindow(); syncState(); });
@@ -575,12 +710,14 @@ async function initialize() {
   }
   initializationComplete = true;
   log('app-ready');
+  if (!testMode) void refreshModels();
   if (testMode) {
-    await require(quitTestMode ? '../tests/quit-electron' : '../tests/smoke-electron').run({ app, getWindow: () => win, store, currentState, ask, saveSettings, importImage, capture, images, showOverlay, hideOverlay, togglePassThrough, toggleCompact, requestQuit, setRecoveryEnabled, changeConversation, cancelSessionEnd,
+    await require(interruptionTestMode ? '../tests/interruption-electron' : quitTestMode ? '../tests/quit-electron' : '../tests/smoke-electron').run({ app, getWindow: () => win, store, currentState, ask, saveSettings, refreshModels, requestKeyboardFocus, importImage, capture, images, showOverlay, hideOverlay, togglePassThrough, toggleCompact, requestQuit, setRecoveryEnabled, changeConversation, cancelSessionEnd,
+      setModelLister: fn => { modelLister = fn; },
       setQuitConfirmationFunction: fn => { quitConfirmationFunction = fn; },
       setRecoveryController: controller => { const previous = recovery; recovery = controller; syncState(); return previous; },
       setAnswerFunction: fn => { answerFunction = fn; }, setKeyValidator: fn => { keyValidator = fn; }, setScreenPermissionFunction: fn => { screenPermissionFunction = fn; }, cancel: () => active?.controller.abort(), clear: () => { history = []; images.clear(); lastAttempt = null; persistHistory(); syncState(); },
-      getHistory: () => history });
+      getHistory: () => history, interruptedWork });
   }
 }
 
@@ -591,6 +728,7 @@ else {
   app.on('window-all-closed', () => { /* The tray owns lifetime; closing the UI keeps the app running. */ });
   app.on('before-quit', event => {
     if (quitGuard.preventQuit()) { event.preventDefault(); return; }
+    interruptedWork?.flush();
     // An accepted ordinary quit is intentional; only abnormal exits should reopen.
     recovery?.disarmForSessionEnd();
     quitting = true; active?.controller.abort(); clearTimeout(geometryTimer);

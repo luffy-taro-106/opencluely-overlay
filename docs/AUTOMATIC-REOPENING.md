@@ -44,6 +44,6 @@ If necessary, use Task Manager to end **recovery-helper-win32-x64.exe**, then **
 
 ## Limits and verification
 
-An unexpected termination can lose an unfinished answer, draft and images held only in memory. Successfully saved completed conversations restore when restoration is enabled. No recovery runs while the computer is off or asleep. Windows session termination, missing files, policy restrictions, terminating the helper, or repeated process kills can prevent reopening.
+With restoration enabled, 2.3.5 encrypts submitted questions and partial output at request start, about once per second while streaming, and on completion/cancellation. Reopening restores the last successful text checkpoint for review and manual retry; it never resends automatically. Unsent drafts, image pixels and output since the last successful save can still be lost. No recovery runs while the computer is off or asleep. Windows session termination, missing files, policy restrictions, terminating the helper, or repeated process kills can prevent reopening. See [resilience details](RESILIENCE.md).
 
 The [Windows port record](WINDOWS-PORT.md) lists current validation. Actual reboot, long-duration use, every third-party closing tool and every meeting client's capture behavior require separate validation. See [Electron's Windows session-end events](https://www.electronjs.org/docs/latest/api/browser-window#event-query-session-end-windows) and [Windows process wait behavior](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.process.enableraisingevents).

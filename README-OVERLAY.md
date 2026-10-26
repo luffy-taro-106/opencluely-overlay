@@ -1,12 +1,12 @@
-# OpenCluely Overlay 2.3 for Windows
+# OpenCluely Overlay 2.3.8 for Windows
 
 A Windows desktop assistant that stays above your apps and answers text and image questions using **OpenAI / ChatGPT**, **Claude**, or **Gemini**.
 
-Built from [arth-agrawal/OpenCluely](https://github.com/arth-agrawal/OpenCluely), based on [TechyCSR/OpenCluely](https://github.com/TechyCSR/OpenCluely), with the updated [Mac 2.3 features](https://github.com/ashokchilka99/mac-godsplan) adapted for Windows. The current source uses the `overlay/` implementation, focused on text and images. See the [Windows parity and validation record](docs/WINDOWS-PORT.md) for the reference revision and current status.
+Built from [arth-agrawal/OpenCluely](https://github.com/arth-agrawal/OpenCluely), based on [TechyCSR/OpenCluely](https://github.com/TechyCSR/OpenCluely), with the updated [Mac 2.3 features](https://github.com/luffy-taro-106/mac-godsplan) adapted for Windows. The current source uses the `overlay/` implementation, focused on text and images. See the [Windows parity and validation record](docs/WINDOWS-PORT.md) for the reference revision and current status.
 
 ## Get started
 
-1. Install an available Windows setup from [Releases](https://github.com/ashokchilka99/opencluely-overlay/releases). The 2.3 source build produces `dist/OpenCluely-Overlay-Setup-2.3.0.exe`. Check the [port record](docs/WINDOWS-PORT.md) for validation and publication status.
+1. Install an available Windows setup from [Releases](https://github.com/luffy-taro-106/opencluely-overlay/releases). The 2.3 source build produces `dist/OpenCluely-Overlay-Setup-2.3.8.exe`. Check the [port record](docs/WINDOWS-PORT.md) for validation and publication status.
 2. Click the gear, choose OpenAI / ChatGPT, Claude, or Gemini, select a model, enter your provider API key, and save. The app checks API access before saving it encrypted on this device. Save a separate key for each provider you use. Saved keys restore after the app or computer restarts. To replace a key, enter the new key and save; a failed check preserves the previous key. Leave the field blank to keep it.
 3. Type a question and press Enter. Shift+Enter adds a new line.
 4. For an image question, use the image button, paste from the clipboard, drag an image onto the window, or take a screenshot. Preview the image, optionally type a question, and press Enter. With no text, the assistant reads and answers the question in the image.
@@ -16,6 +16,7 @@ These are unsigned development builds; Windows may show a publisher warning. Pub
 ## Overlay behavior
 
 - Stays above ordinary desktop windows. Drag the title bar to move it and use the edges to resize.
+- Showing the overlay, taking a screenshot and using pointer controls preserve browser focus. Click the question or another editable field to type normally; Windows temporarily activates the overlay for keyboard input. Clicking back in the browser restores passive behavior automatically. See [Windows focus behavior](docs/NONACTIVATING-PANEL.md).
 - The pointer button enables click-through, allowing mouse and keyboard input to reach the app underneath. Use Ctrl+Alt+I or the tray to interact again.
 - The compact button collapses the conversation to a small toolbar.
 - The minus button, Escape, and the normal close action hide to the tray. The process and active answer keep running. Quit explicitly through the tray or Settings.
@@ -28,6 +29,7 @@ These are unsigned development builds; Windows may show a publisher warning. Pub
 | Action | Shortcut |
 | --- | --- |
 | Show / hide | Ctrl+Alt+Space |
+| Type a question | Ctrl+Alt+T |
 | Toggle click-through | Ctrl+Alt+I |
 | Screenshot | Ctrl+Alt+S |
 
@@ -36,10 +38,12 @@ If another app has registered a shortcut, Settings shows a warning and the tray/
 ## Text and image handling
 
 - OpenAI, Claude and Gemini stream answers into the current conversation. Switch using the provider selector.
-- Attach one PNG/JPEG per question, up to 10 MB and 32 megapixels. The app validates the format and dimensions before decoding. Images are converted to JPEG and capped at 2560 pixels on the longest side. Use a close crop for small text.
-- Follow-ups may include up to three recent images from this session. The image cache holds at most ten images. Older images may need to be attached again.
+- Attach up to ten PNG/JPEG images per question, each up to 10 MB and 32 megapixels. Upload, paste, drag/drop and repeated screenshots append in order. Preview or remove individual images before sending. Images are converted to JPEG and capped at 2560 pixels on the longest side and 4 MiB each.
+- Follow-ups include up to ten images, with historical images bounded to a combined 20 MiB context budget. The cache holds at most twenty images and protects queued/active attachments from eviction. Restored conversations keep names; reattach pixels after restarting.
+- App opacity and code-box opacity each range independently from 10% to 100%. Both preferences persist, and code can remain fully readable with the surrounding interface faded.
 - Requests include at most eight previous completed exchanges, bounded to about 48,000 text characters. Incomplete/cancelled answers do not enter model context.
 - Stop cancels the active request. Temporary failures are retried up to twice, only before output arrives. Requests have a two-minute total deadline. Interrupted output requires an explicit retry.
+- Each configured provider refreshes its available chat-model catalog on launch. Refresh models / check key in Settings repeats that metadata check. Per-model reasoning effort is available in Settings and beside the chat model, and each selection is remembered independently.
 - Each provider has a model dropdown and remembers its selection. A custom-ID option remains available. Build-time defaults are `gpt-6.1-sol`, `claude-sonnet-5-5`, and `gemini-3.8-flash`; existing profiles retain their saved selections. Model availability, vision support, billing and quota depend on your account. The app never silently switches models or providers.
 - **New chat** resets the composer and context. With restoration enabled, the previous completed conversation is encrypted and saved first. Reopen or delete previous chats in Settings. Opening a previous chat archives the current completed conversation. Stop an active answer before changing conversations.
 - Answers support Markdown, code blocks, copying and Markdown export. Generated HTML is sanitized; remote images and scripts are blocked. Clicking a generated link copies it for you to open in your own browser.
@@ -50,7 +54,7 @@ Text and attached images go directly to your selected AI provider over HTTPS whe
 
 Saved keys stay in the native process and do not return in renderer state or exports. Keys and optional saved conversation text are encrypted with Windows DPAPI through Electron safeStorage. This protects files from other Windows users; other processes running as your user may still be able to decrypt them. If encryption is unavailable, the app refuses to persist keys/history instead of saving plaintext.
 
-Images stay in bounded memory and are never written to conversation history. Reopening restores text and image names, but you must reattach pixels. Disabling restoration removes saved current and archived chats from disk. Clear conversation clears only the current chat and releases its images; previous chats remain available. Archives are bounded to 100 chats and about 3 MB of text. Exports are plaintext Markdown saved only when you choose Export.
+Images stay in bounded memory and are never written to conversation history. Reopening restores text and image names, but you must reattach pixels. With restoration enabled, submitted questions and partial output are encrypted in `interrupted-work.enc`, checkpointed about once per second, and shown as interrupted after reopening. Restoration never automatically resends a provider request. Disabling restoration removes saved current, archived and unfinished chats from disk. Clear conversation clears only the current chat and releases its images; previous chats remain available. Archives are bounded to 100 chats and about 3 MB of text. Exports are plaintext Markdown saved only when you choose Export.
 
 Data lives in `%APPDATA%/OpenCluely Overlay`. Version 2.3 restores legacy `conversation.enc` text and migrates it into the encrypted `chats.enc` current-chat/archive store on the next successful save. Keep the entire existing profile when upgrading; it contains encryption state needed to restore saved keys and history. Renderer drafts and caches use an in-memory browser session. Diagnostics are size-bounded and contain lifecycle/error categories, not prompts, image pixels, keys or provider response bodies. Recovery state contains process/session information, not provider keys or conversations.
 
@@ -64,7 +68,7 @@ Includes a single-instance lock, close-to-tray lifetime, a cooperative quit guar
 
 Normal close protection handles cooperative requests. Task Manager, process termination, shutdown/sign-out, and sufficiently privileged software can still stop the app or its helper. Recovery attempts to reopen an unexpectedly stopped app while enabled; repeated terminations can keep interrupting it. Explicit Quit, pausing recovery, shutdown and sign-out remain under your control. There is no guarantee against every third-party closing tool or capture method.
 
-The app cannot run while the computer sleeps or is off. UAC/security screens and some exclusive fullscreen applications prevent ordinary overlays. Sleep cancels active requests; retry after resume. An unexpected termination can lose an unfinished answer, draft and image pixels. Only successfully saved completed conversations restore. Login startup remains a separate preference and starts the app after Windows sign-in, not before the computer is powered on.
+The app cannot run while the computer sleeps or is off. UAC/security screens and some exclusive fullscreen applications prevent ordinary overlays. Sleep cancels active requests; retry after resume. Renderer recovery preserves a healthy request in the main process. Main-process termination loses its connection, unsent draft, image pixels and output since the latest successful checkpoint. Saved partial text and completed conversations restore when restoration is enabled. Login startup remains a separate preference and starts the app after Windows sign-in, not before the computer is powered on.
 
 AI answers can be wrong, especially with blurry images. The assistant is instructed to identify unclear text and uncertainty. No finite test suite can guarantee a bug-free app or smooth behavior above every application.
 
