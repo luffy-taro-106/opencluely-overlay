@@ -28,7 +28,7 @@ exports.run = async ({ runtime, js, until, test }) => {
       await click('#settingsProvider-picker');
       await until(async () => await js('document.getElementById("settingsProvider-picker").getAttribute("aria-expanded")==="true"'));
       assert.equal(await js('document.querySelector(".overlay-select-list").closest("dialog").id'), 'settingsDialog');
-      assert.equal(await js('document.querySelectorAll(".overlay-select-list [role=option]").length'), 4);
+      assert.equal(await js('document.querySelectorAll(".overlay-select-list [role=option]").length'), 5);
       // The fourth Settings provider is the separate ChatGPT account connection.
       await click('#settingsProvider-picker-option-3');
       await until(async () => await js('document.getElementById("settingsProvider").value==="chatgpt"&&!document.getElementById("chatgptConnection").hidden'));

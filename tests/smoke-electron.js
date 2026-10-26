@@ -382,7 +382,7 @@ exports.run = async runtime => {
       const image=runtime.importImage({name:'openai-vision.png',data:imageBytes.toString('base64')});
       await runtime.ask({text:'OpenAI image test',imageId:image.id});
       await until(()=>!runtime.currentState().busy);
-      await until(async()=>await js('document.querySelector(".message:last-child .message-header").textContent.includes("CHATGPT")'));
+      await until(async()=>await js('document.querySelector(".message:last-child .message-header").textContent.includes("OPENAI API")'));
       assert.equal(runtime.getHistory().at(-1).provider,'openai');
       await runtime.saveSettings({provider:'anthropic'});
     });
@@ -740,6 +740,7 @@ exports.run = async runtime => {
       }
     });
     await require('./chatgpt-desktop').run({ runtime, js, until, test, imageBytes });
+    await require('./codex-desktop').run({ runtime, js, until, test, imageBytes });
     await require('./dropdowns-desktop').run({ runtime, js, until, test });
     await test('deleting a key takes effect and image cache is bounded', async () => {
       runtime.setAnswerFunction(async({onDelta})=>{onDelta('Persisted test answer');return{text:'Persisted test answer',truncated:false};});

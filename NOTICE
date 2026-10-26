@@ -10,3 +10,8 @@ This version uses the focused text/image overlay, native Windows lifecycle and
 capture controls, encrypted storage, and a per-user Windows recovery helper.
 The earlier voice, interview-specific and stealth interfaces are available in
 Git history for reference and are not included in the new desktop distribution.
+
+Version 2.5 incorporates luffy-taro-106/opencluely-overlay commit 723ad56,
+including its ChatGPT account integration and passive dropdown controls.
+The distribution includes the official OpenAI Codex client 0.164.0,
+licensed under Apache-2.0. Its upstream source is https://github.com/openai/codex.

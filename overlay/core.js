@@ -9,7 +9,7 @@ const imageNames = value => Array.isArray(value?.imageNames) ? value.imageNames 
 const { PROVIDERS, EFFORTS, validModelId } = require('./models');
 const DEFAULTS = Object.freeze({
   provider: 'anthropic',
-  models: { anthropic: 'claude-sonnet-5-5', gemini: 'gemini-3.8-flash', openai: 'gpt-6.1-sol', chatgpt: 'chatgpt-auto' },
+  models: { anthropic: 'claude-sonnet-5-5', gemini: 'gemini-3.8-flash', openai: 'gpt-6.1-sol', chatgpt: 'chatgpt-auto', codex: 'codex-auto' },
   reasoningEfforts: {},
   opacity: 0.98, codeOpacity: 1, launchAtLogin: false, rememberHistory: true, hideFromCapture: true, protectFromQuit: true,
   bounds: null, compact: false
@@ -19,7 +19,7 @@ function validateSettings(input, current = DEFAULTS) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid settings.');
   const next = { ...DEFAULTS, ...current, models: { ...DEFAULTS.models, ...current.models }, reasoningEfforts: { ...current.reasoningEfforts } };
   if ('provider' in input) {
-    if (!PROVIDERS.includes(input.provider)) throw new Error('Choose Claude, Gemini, an OpenAI API key, or a ChatGPT account.');
+    if (!PROVIDERS.includes(input.provider)) throw new Error('Choose Claude, Gemini, an OpenAI API key, ChatGPT, or Codex.');
     next.provider = input.provider;
   }
   for (const provider of PROVIDERS) {

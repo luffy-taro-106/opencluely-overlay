@@ -18,6 +18,12 @@ function launch(phase) {
 }
 
 void (async () => {
+  // Establish the Windows encryption profile through a normal first exit.
+  // Chromium may not write Local State before an immediate first-run SIGKILL.
+  // The actual writer below is still force-killed, with no graceful flush.
+  const bootstrap = launch('bootstrap');
+  assert.equal((await once(bootstrap, 'exit'))[0], 0, 'Encryption profile bootstrap must pass');
+  if (process.platform === 'win32') assert.ok(fs.existsSync(path.join(profile, 'Local State')));
   const writer = launch('write');
   const exit = once(writer, 'exit');
   let timer;

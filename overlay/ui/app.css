@@ -23,3 +23,5 @@ body:has(dialog[open]) #appBackdrop{clip-path:none}
 .message-body pre{color:var(--text)}
 .message-body blockquote.contains-code{border-left-color:color-mix(in srgb,#607d5c calc(var(--app-opacity,.98) * 100%),transparent)}
 .message-body .contains-code::marker{color:color-mix(in srgb,var(--text) calc(var(--app-opacity,.98) * 100%),transparent)}
+
+.account-strip #codexAccountButton{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:left;min-width:0;color:var(--accent)}

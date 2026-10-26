@@ -1,14 +1,13 @@
-# OpenCluely Overlay 2.4.1 for Windows
+# OpenCluely Overlay 2.5.0 for Windows
 
-Version 2.4 adds a separate **ChatGPT account** connection with browser sign-in, encrypted sessions, saved account switching and account-specific model discovery. See [ChatGPT setup and credential handling](docs/CHATGPT-SIGN-IN.md). This is a local build; the published 2.3.8 downloads below are the previous release.
+Version 2.5.0 incorporates upstream login commit `723ad56` and adds separate **ChatGPT account**, **Codex account**, and **OpenAI API key** connections. See [account setup and limits](docs/CHATGPT-SIGN-IN.md) and [validation results](docs/VERIFICATION-2.5.0.md). The locally built installer is `dist/OpenCluely-Overlay-Setup-2.5.0.exe`; older download links below refer to earlier releases.
 
-Version 2.4.1 replaces Windows native dropdown popups with in-window menus so provider, model, reasoning and saved-account choices work while the overlay preserves browser focus.
-
-Windows desktop assistant for text and image questions using **OpenAI / ChatGPT, Claude, or Gemini**, adapted from the updated [Mac version](https://github.com/luffy-taro-106/mac-godsplan).
+Windows desktop assistant for text and image questions using **ChatGPT, Codex, OpenAI API, Claude, or Gemini**, adapted from the updated [Mac version](https://github.com/luffy-taro-106/mac-godsplan).
 
 - Always-on-top overlay with tray controls, click-through, compact view, and global shortcuts.
 - Browser focus preserved when showing the overlay and using pointer controls; clicking a text field automatically enables normal Windows typing.
 - Live account model catalogs and per-model reasoning controls from the updated Mac version.
+- Browser sign-in for ChatGPT plan usage and the official Codex client, with independent model lists and locally protected credentials. Account eligibility and usage limits apply.
 - Text questions, image upload/paste/drop, screenshots, and streamed answers.
 - Up to ten ordered image attachments per question, with individual previews and removal.
 - Independent app and code-box opacity from 10% to 100%, and the same plain chat interface as Mac 2.3.8.
@@ -22,7 +21,7 @@ Windows desktop assistant for text and image questions using **OpenAI / ChatGPT,
 
 Download the [Windows 2.3.8 installer](https://github.com/luffy-taro-106/opencluely-overlay/releases/download/v2.3.8/OpenCluely-Overlay-Setup-2.3.8.exe) or the [complete Codex setup bundle](https://github.com/luffy-taro-106/opencluely-overlay/releases/download/v2.3.8/OpenCluely-Windows-2.3.8-Codex-Setup.zip), including the installer, source, setup guides, and SHA-256 verification manifest.
 
-Build the Windows installer as `dist/OpenCluely-Overlay-Setup-2.3.8.exe`. These are unsigned development builds. See the [Windows port status](docs/WINDOWS-PORT.md) for the reference revision and validation record.
+Build the Windows installer as `dist/OpenCluely-Overlay-Setup-2.5.0.exe`. These are unsigned development builds. See the [Windows port status](docs/WINDOWS-PORT.md) for the original reference revision and [2.5.0 verification](docs/VERIFICATION-2.5.0.md) for current results.
 
 See [setup, controls, privacy and development](README-OVERLAY.md), [automatic reopening and emergency stop](docs/AUTOMATIC-REOPENING.md), and [startup and shortcuts](docs/STARTUP.md).
 

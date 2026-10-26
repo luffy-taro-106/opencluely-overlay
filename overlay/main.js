@@ -10,6 +10,7 @@ const { DEFAULTS, MAX_IMAGE_BYTES, MAX_IMAGES, imageIds, imageNames, validateSet
 const { streamAnswer, validateApiKey, listProviderModels } = require('./providers');
 const { Store } = require('./storage');
 const { ChatGPTAuth } = require('./chatgpt-auth');
+const { CodexConnection } = require('./codex');
 const { InterruptedWork } = require('./interrupted-work');
 const { QuitGuard } = require('./quit-guard');
 const { WindowsRecovery, recoverySession } = require('./recovery');
@@ -38,6 +39,7 @@ let screenshotRestore = true;
 let launchHidden = false;
 let recovery, interruptedWork, initializationComplete = false;
 let chatgpt, loadedChatGPTProfile = null, chatgptSessionEpoch = 0, pendingAsk = null;
+let codex, codexEpoch = 0;
 let recoveryBeforeSessionEnd = false;
 let archivedChats = [];
 const images = new Map(), warnings = [], recoveryTimes = [], shortcuts = [];
@@ -106,8 +108,9 @@ function currentState() {
     lastAttempt: lastAttempt ? { ...lastAttempt, images: imageIds(lastAttempt.question).map(id => images.get(id)).filter(Boolean).map(publicImage) } : null,
     maxImages: MAX_IMAGES,
     draftImages: [...draftImageIds].map(id => images.get(id)).filter(Boolean).map(publicImage),
-    keyStatus: Object.fromEntries(PROVIDERS.map(provider => [provider, provider === 'chatgpt' ? !!chatgpt?.publicState().sharing : !!keys[provider]])),
+    keyStatus: Object.fromEntries(PROVIDERS.map(provider => [provider, provider === 'codex' ? !!codex?.publicState().connected : provider === 'chatgpt' ? !!chatgpt?.publicState().sharing : !!keys[provider]])),
     chatgpt: chatgpt?.publicState() || { profiles: [], activeProfileId: null, connected: false, sharing: false, busy: false, error: '' },
+    codex: codex?.publicState() || { connected: false, busy: false, signingIn: false, error: '' },
     modelCatalog, modelStatus,
     archivedChats: archivedChats.map(({ id, title, updatedAt }) => ({ id, title, updatedAt })),
     secureStorage: store.available(), warnings, shortcuts, platform,
@@ -119,6 +122,55 @@ function currentState() {
   };
 }
 function syncState() { emit({ type: 'state', value: currentState() }); updateTray(); }
+
+function codexChanged() {
+  if (!codex?.publicState().connected) { modelCatalog.codex = []; delete modelStatus.codex; }
+  if (win && !quitting) syncState();
+}
+async function changeCodexConnection(action, { signOut = false } = {}) {
+  if (signOut && pendingAsk) { pendingAsk.controller.abort(); await pendingAsk.done; }
+  if (settingsBusy) throw new Error('Wait for the current settings or sign-in operation.');
+  if (active && !signOut) throw new Error('Stop the current answer before changing Codex accounts.');
+  settingsBusy = true; codexEpoch++;
+  try {
+    if (signOut && active?.provider === 'codex') { const request = active; request.controller.abort(); await request.done; }
+    const result = await action();
+    modelCatalog.codex = []; delete modelStatus.codex;
+    settings.models.codex = 'codex-auto'; settings.reasoningEfforts.codex = {};
+    store.remove('codex-models.json');
+    if (!signOut) settings.provider = 'codex';
+    persistSettings();
+    if (codex.publicState().connected) await refreshCodexModels();
+    if (!quitting) showOverlay(false);
+    syncState(); return currentState();
+  } finally { settingsBusy = false; }
+}
+async function refreshCodexModels() {
+  if (!codex) return;
+  const epoch = codexEpoch;
+  const previous = modelRefreshes.get('codex');
+  if (previous?.epoch === epoch) return previous.promise;
+  const task = { epoch };
+  modelStatus.codex = { ...modelStatus.codex, refreshing: true, error: '' };
+  task.promise = (async () => {
+    try {
+      const result = await codex.listModels();
+      if (epoch !== codexEpoch || !codex.publicState().connected) return;
+      modelCatalog.codex = result.models;
+      modelStatus.codex = { source: 'live', total: result.total, checkedAt: result.checkedAt, refreshing: false, error: '' };
+      if (!result.models.some(item => item.id === settings.models.codex) && result.models[0]) {
+        settings.models.codex = result.models[0].id; persistSettings();
+      }
+      store.write('codex-models.json', result);
+    } catch (error) {
+      if (epoch === codexEpoch) modelStatus.codex = { ...modelStatus.codex, refreshing: false, error: error.message };
+    } finally {
+      if (modelRefreshes.get('codex') === task) modelRefreshes.delete('codex');
+      if (!quitting) syncState();
+    }
+  })();
+  modelRefreshes.set('codex', task); syncState(); return task.promise;
+}
 
 function validCachedModels(entry) {
   return entry && Array.isArray(entry.models) && entry.models.length <= 1000 && Number.isFinite(entry.total) && Number.isFinite(Date.parse(entry.checkedAt)) &&
@@ -148,10 +200,10 @@ async function changeChatGPTConnection(action, { signOut = false, stopAnswer = t
   if (signOut && stopAnswer && pendingAsk) { pendingAsk.controller.abort(); await pendingAsk.done; }
   if (settingsBusy) throw new Error('Wait for the current settings or sign-in operation.');
   if (active && !signOut) throw new Error('Stop the current answer before changing ChatGPT accounts.');
-  if (signOut && stopAnswer && active?.provider === 'chatgpt') active.controller.abort();
   settingsBusy = true;
   chatgptSessionEpoch++;
   try {
+    if (signOut && stopAnswer && active?.provider === 'chatgpt') { const request = active; request.controller.abort(); await request.done; }
     const result = await action();
     loadChatGPTProfile(true);
     if (!signOut) settings.provider = 'chatgpt';
@@ -183,6 +235,7 @@ async function refreshModels(provider = null) {
   if (provider !== null && !PROVIDERS.includes(provider)) throw new Error('Choose a valid AI provider.');
   await Promise.all((provider ? [provider] : PROVIDERS).map(async selected => {
     if (selected === 'chatgpt') return refreshChatGPTModels();
+    if (selected === 'codex') return codex?.publicState().connected || selected === provider ? refreshCodexModels() : undefined;
     const apiKey = keys[selected];
     if (!apiKey) return;
     if (modelRefreshes.get(selected)?.apiKey === apiKey) return modelRefreshes.get(selected).promise;
@@ -514,6 +567,9 @@ async function ask(input) {
     pendingAsk = pending; syncState();
     try { apiKey = await chatgpt.accessToken({ signal: pending.controller.signal }); pending.controller.signal.throwIfAborted(); }
     finally { pendingAsk = null; settingsBusy = false; settled(); syncState(); }
+  } else if (provider === 'codex') {
+    if (!codex.publicState().connected) throw new Error('Sign in to Codex in Settings before asking a question.');
+    if (!modelCatalog.codex.some(item => item.id === model)) throw new Error('Refresh Codex models and choose an available model in Settings.');
   } else if (!apiKey) throw new Error(`Add your ${PROVIDER_NAMES[provider]} API key in Settings first.`);
   const attachments = question.imageIds.map(id => images.get(id));
   if (attachments.some(image => !image)) throw new Error('An attachment expired. Please attach the missing image again.');
@@ -527,9 +583,9 @@ async function ask(input) {
   emit({ type: 'start', id: request.id, question, images: attachments.map(publicImage), provider, model });
   updateTray();
   // Returning immediately lets the UI cancel while the stream is running.
-  void (async () => {
+  request.done = (async () => {
     try {
-      const answer = await answerFunction({ provider, model, apiKey, reasoningEffort, modelInfo, messages: boundedContext(history, question, id => images.get(id)), signal: request.controller.signal,
+      const answer = await (provider === 'codex' ? options => codex.answer(options) : answerFunction)({ provider, model, apiKey, reasoningEffort, modelInfo, messages: boundedContext(history, question, id => images.get(id)), signal: request.controller.signal,
         onDelta: delta => { request.text += delta; interruptedWork.update(request, history); emit({ type: 'delta', id: request.id, text: delta }); },
         onStatus: text => emit({ type: 'status', id: request.id, text }) });
       request.controller.signal.throwIfAborted();
@@ -561,8 +617,9 @@ async function saveSettings(input) {
   settingsBusy = true;
   try {
     const next = validateSettings(input, settings);
-    if (next.provider === 'chatgpt' && (input.removeKey === true || (typeof input.apiKey === 'string' && input.apiKey.trim()))) throw new Error('Use Continue with ChatGPT or Sign out to manage this connection. API keys use the separate OpenAI API key connection.');
+    if (['chatgpt', 'codex'].includes(next.provider) && (input.removeKey === true || (typeof input.apiKey === 'string' && input.apiKey.trim()))) throw new Error('Use the account sign-in or Sign out controls for this connection. API keys use the separate OpenAI API key connection.');
     if (input.models?.chatgpt && input.models.chatgpt !== 'chatgpt-auto' && !modelCatalog.chatgpt.some(item => item.id === input.models.chatgpt)) throw new Error('Choose a model available to this ChatGPT account.');
+    if (input.models?.codex && input.models.codex !== 'codex-auto' && !modelCatalog.codex.some(item => item.id === input.models.codex)) throw new Error('Choose a model available to the Codex connection.');
     for (const [provider, choices] of Object.entries(input.reasoningEfforts || {})) {
       for (const [model, effort] of Object.entries(choices)) {
         const info = modelCatalog[provider].find(item => item.id === model) || modelDetails(provider, model);
@@ -694,6 +751,9 @@ function registerIPC() {
   handle('chatgpt-select-profile', id => changeChatGPTConnection(() => chatgpt.selectProfile(id)));
   handle('chatgpt-sign-out', id => changeChatGPTConnection(() => chatgpt.signOut(id), { signOut: true, stopAnswer: !id || id === chatgpt.publicState().activeProfileId }));
   handle('chatgpt-manage-usage', async () => { await shell.openExternal('https://chatgpt.com/settings/usage'); return currentState(); });
+  handle('codex-sign-in', () => changeCodexConnection(() => codex.signIn()));
+  handle('codex-cancel-sign-in', async () => { await codex.cancelSignIn(); return currentState(); });
+  handle('codex-sign-out', () => changeCodexConnection(() => codex.signOut(), { signOut: true }));
   handle('screen-settings', openScreenSettings);
   handle('set-recovery-enabled', setRecoveryEnabled);
   handle('new-chat', () => changeConversation());
@@ -774,8 +834,9 @@ async function initialize() {
   if (canStartAtLogin() && typeof login.openAtLogin === 'boolean') settings.launchAtLogin = login.openAtLogin;
   if (!store.available()) { settings.rememberHistory = false; warn('Secure storage is unavailable. API keys and history cannot be saved.'); }
   const credentials = store.read('credentials.enc', {}, true);
-  for (const provider of PROVIDERS) if (provider !== 'chatgpt' && typeof credentials?.[provider] === 'string' && credentials[provider].length <= 500) keys[provider] = credentials[provider];
+  for (const provider of PROVIDERS) if (!['chatgpt', 'codex'].includes(provider) && typeof credentials?.[provider] === 'string' && credentials[provider].length <= 500) keys[provider] = credentials[provider];
   chatgpt = new ChatGPTAuth({ store, openExternal: url => shell.openExternal(url), onChange: chatGPTChanged });
+  codex = new CodexConnection({ directory: path.join(store.directory, 'codex-profile'), openExternal: url => shell.openExternal(url), onChange: codexChanged, version: app.getVersion() });
   loadChatGPTProfile(true);
   restoreModelCatalog();
   if (settings.rememberHistory) {
@@ -817,11 +878,22 @@ async function initialize() {
   }
   initializationComplete = true;
   log('app-ready');
-  if (!testMode) void refreshModels();
+  if (!testMode) {
+    void refreshModels();
+    if (fs.existsSync(path.join(store.directory, 'codex-profile'))) void codex.readAccount().then(() => {
+      const cached = store.read('codex-models.json', null);
+      if (codex.publicState().connected && validCachedModels(cached)) {
+        modelCatalog.codex = cached.models;
+        modelStatus.codex = { source: 'cached', total: cached.total, checkedAt: cached.checkedAt, refreshing: false, error: '' };
+      }
+      return codex.publicState().connected ? refreshCodexModels() : undefined;
+    }).catch(() => { log('codex-restore-unavailable'); });
+  }
   if (testMode) {
     await require(interruptionTestMode ? '../tests/interruption-electron' : quitTestMode ? '../tests/quit-electron' : '../tests/smoke-electron').run({ app, getWindow: () => win, store, currentState, ask, saveSettings, refreshModels, requestKeyboardFocus, importImage, capture, images, showOverlay, hideOverlay, togglePassThrough, toggleCompact, requestQuit, setRecoveryEnabled, changeConversation, cancelSessionEnd,
       setModelLister: fn => { const previous = modelLister; modelLister = fn; return previous; },
       setChatGPTController: controller => { const previous = chatgpt; chatgpt = controller; chatgptSessionEpoch++; loadChatGPTProfile(true); syncState(); return previous; },
+      setCodexController: controller => { const previous = codex; codex = controller; codexEpoch++; codexChanged(); return previous; },
       setQuitConfirmationFunction: fn => { quitConfirmationFunction = fn; },
       setRecoveryController: controller => { const previous = recovery; recovery = controller; syncState(); return previous; },
       setAnswerFunction: fn => { const previous = answerFunction; answerFunction = fn; return previous; }, setKeyValidator: fn => { keyValidator = fn; }, setScreenPermissionFunction: fn => { screenPermissionFunction = fn; }, cancel: () => { pendingAsk?.controller.abort(); active?.controller.abort(); }, clear: () => { history = []; images.clear(); lastAttempt = null; persistHistory(); syncState(); },
@@ -841,12 +913,13 @@ else {
     recovery?.disarmForSessionEnd();
     quitting = true; pendingAsk?.controller.abort(); active?.controller.abort(); clearTimeout(geometryTimer);
     chatgpt?.cancelSignIn();
+    codex?.stop();
     if (settings && store) {
       if (win && !win.isDestroyed()) { const bounds = win.getBounds(); settings.bounds = { ...bounds, height: settings.compact ? normalBounds?.height || 700 : bounds.height }; }
       try { persistSettings(); persistHistory(); } catch { log('shutdown-save-failed'); }
     }
   });
-  app.on('will-quit', () => { globalShortcut.unregisterAll(); tray?.destroy(); });
+  app.on('will-quit', () => { codex?.stop(); globalShortcut.unregisterAll(); tray?.destroy(); });
   app.whenReady().then(initialize).catch(error => {
     log('startup-failed');
     if (testMode) { console.error(error); app.exit(1); }

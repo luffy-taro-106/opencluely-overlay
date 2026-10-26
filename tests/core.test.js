@@ -30,9 +30,9 @@ test('preferences reject unsafe input and do not mutate defaults', () => {
 });
 test('model menus include each provider default and still permit custom vision model IDs', () => {
   for (const provider of PROVIDERS) {
-    if (provider === 'chatgpt') {
+    if (provider === 'chatgpt' || provider === 'codex') {
       assert.deepEqual(MODEL_CATALOG[provider], [], 'Subscription model access is discovered only after connecting an account');
-      assert.equal(DEFAULTS.models.chatgpt, 'chatgpt-auto');
+      assert.equal(DEFAULTS.models[provider], `${provider}-auto`);
     } else assert.ok(MODEL_CATALOG[provider].some(model => model.id === DEFAULTS.models[provider]));
     assert.equal(new Set(MODEL_CATALOG[provider].map(model => model.id)).size, MODEL_CATALOG[provider].length);
     for (const model of MODEL_CATALOG[provider]) assert.equal(validateSettings({models:{[provider]:model.id}}).models[provider],model.id);

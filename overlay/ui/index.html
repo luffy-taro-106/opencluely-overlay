@@ -29,7 +29,7 @@
     </div>
   </header>
   <div class="toolbar">
-    <label class="provider-pill"><span class="provider-dot"></span><select id="provider" aria-label="AI provider"><option value="anthropic">Claude</option><option value="gemini">Gemini</option><option value="openai">OpenAI API key</option><option value="chatgpt">ChatGPT account</option></select></label>
+    <label class="provider-pill"><span class="provider-dot"></span><select id="provider" aria-label="AI provider"><option value="anthropic">Claude</option><option value="gemini">Gemini</option><option value="openai">OpenAI API key</option><option value="chatgpt">ChatGPT account</option><option value="codex">Codex account</option></select></label>
     <div class="tools">
       <button class="icon-button" id="uploadButton" title="Attach up to 10 PNG or JPEG images" aria-label="Attach images"><svg><use href="#image"/></svg></button>
       <button class="icon-button" id="captureButton" title="Capture selected display · Ctrl+Alt+S" aria-label="Capture a screenshot"><svg><use href="#capture"/></svg></button>
@@ -40,6 +40,7 @@
   </div>
   <div class="model-strip"><select id="quickModel" aria-label="Model for the selected provider"></select><select id="quickEffort" aria-label="Reasoning effort" title="Reasoning effort"></select><button id="newChatButton" type="button" class="new-chat-button">＋ New chat</button></div>
   <div class="account-strip" id="chatgptAccountStrip" hidden><button type="button" class="text-button" id="chatgptAccountButton" title="ChatGPT account settings"><span id="chatgptUsageLabel"></span></button><button type="button" class="text-button" id="chatgptQuickUsage">Manage usage</button></div>
+  <div class="account-strip" id="codexAccountStrip" hidden><button type="button" class="text-button" id="codexAccountButton"><span id="codexUsageLabel"></span></button></div>
   <div class="mode-banner" id="passBanner" hidden>Clicks pass to the app underneath <kbd data-shortcut="Click-through">Ctrl+Alt+I</kbd> to interact</div>
   <section class="content" id="content" aria-label="Conversation">
     <div class="welcome" id="welcome">
@@ -62,7 +63,7 @@
 <dialog id="settingsDialog" class="settings-dialog">
   <div class="dialog-heading"><h2>Settings</h2><button class="icon-button" id="closeSettings" aria-label="Close settings"><svg><use href="#close"/></svg></button></div>
   <form id="settingsForm">
-    <label>AI provider<select id="settingsProvider"><option value="anthropic">Anthropic Claude</option><option value="gemini">Google Gemini</option><option value="openai">OpenAI API key</option><option value="chatgpt">ChatGPT account</option></select></label>
+    <label>AI provider<select id="settingsProvider"><option value="anthropic">Anthropic Claude</option><option value="gemini">Google Gemini</option><option value="openai">OpenAI API key</option><option value="chatgpt">ChatGPT account</option><option value="codex">Codex account</option></select></label>
     <section class="chatgpt-connection" id="chatgptConnection" aria-label="ChatGPT account" hidden>
       <label id="chatgptProfileLabel">Saved ChatGPT connection<select id="chatgptProfile" aria-label="Saved ChatGPT connection"></select></label>
       <p id="chatgptConnectionStatus" class="connection-status" role="status" aria-live="polite"></p>
@@ -71,6 +72,13 @@
       <div class="account-actions"><button type="button" class="text-button" id="chatgptManageUsage">Manage usage</button><button type="button" class="text-button danger" id="chatgptSignOut" hidden>Sign out…</button></div>
       <p class="connection-hint">Sign in and approve ChatGPT plan usage in your browser. Account and workspace eligibility applies. Credentials stay encrypted on this device.</p>
       <p class="connection-error" id="chatgptConnectionError" role="alert" hidden></p>
+    </section>
+    <section class="chatgpt-connection" id="codexConnection" aria-label="Codex account" hidden>
+      <p id="codexConnectionStatus" class="connection-status" role="status" aria-live="polite"></p>
+      <button type="button" class="chatgpt-signin-button" id="codexSignIn">Sign in to Codex with ChatGPT</button>
+      <div class="account-actions"><button type="button" class="text-button" id="codexCancelSignIn" hidden>Cancel sign-in</button><button type="button" class="text-button" id="codexManageUsage">Manage usage</button><button type="button" class="text-button danger" id="codexSignOut" hidden>Sign out…</button></div>
+      <p class="connection-hint">Uses the official Codex client and its model catalog. Your login stays in this app's separate Windows credential-store profile. ChatGPT plan and Codex model availability may differ. This connection answers text and images with computer tools disabled.</p>
+      <p class="connection-error" id="codexConnectionError" role="alert" hidden></p>
     </section>
     <label>Model<select id="modelPreset"></select><small id="modelHint">Available chat models from your API account. Text-only models are marked.</small></label>
     <div class="catalog-controls"><small id="modelStatus" role="status"></small><button type="button" id="refreshModels" class="text-button">Refresh models / check key</button></div>
@@ -108,6 +116,7 @@
 <dialog id="clearDialog" class="confirm-dialog"><h2>Clear this conversation?</h2><p>This removes the conversation saved on this device and releases attached images.</p><div><button id="cancelClear" class="secondary-button">Keep conversation</button><button id="confirmClear" class="primary-button">Clear</button></div></dialog>
 <dialog id="deleteChatDialog" class="confirm-dialog"><h2>Delete this saved chat?</h2><p id="deleteChatTitle"></p><div><button id="cancelDeleteChat" class="secondary-button">Keep chat</button><button id="confirmDeleteChat" class="primary-button">Delete chat</button></div></dialog>
 <dialog id="chatgptSignOutDialog" class="confirm-dialog"><h2>Sign out of ChatGPT?</h2><p id="chatgptSignOutLabel"></p><p>The saved credentials for this connection will be removed from this device. Other connections and API keys stay available.</p><div><button id="cancelChatGPTSignOut" class="secondary-button">Stay connected</button><button id="confirmChatGPTSignOut" class="primary-button">Sign out</button></div></dialog>
+<dialog id="codexSignOutDialog" class="confirm-dialog"><h2>Sign out of Codex?</h2><p>This disconnects the Codex connection in this overlay. Your other account connections and API keys stay saved.</p><div><button id="cancelCodexSignOut" class="secondary-button">Stay connected</button><button id="confirmCodexSignOut" class="primary-button">Sign out</button></div></dialog>
 <script src="../../node_modules/marked/lib/marked.umd.js"></script>
 <script src="../../node_modules/dompurify/dist/purify.min.js"></script>
 <script src="selects.js"></script>
