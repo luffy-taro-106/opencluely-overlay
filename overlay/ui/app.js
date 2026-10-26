@@ -12,6 +12,11 @@ const content = $('content');
 let selectedDisplay = sessionStorage.getItem('display') || '';
 let recoveryRequested = null, recoveryActionError = '';
 let backdropFrame = 0;
+let chatgptActionPending = false, chatgptSigningIn = false, chatgptActionError = '', signingOutProfile = null, settingsSaving = false;
+const chatgptState = () => state?.chatgpt || { profiles: [], connected: false, sharing: false, busy: false };
+function selectedChatGPTProfile(account = chatgptState()) { return account.profiles?.find(profile => profile.id === account.activeProfileId); }
+function chatgptNeedsSignIn(account = chatgptState()) { return !!(account.needsSignIn || selectedChatGPTProfile(account)?.needsSignIn); }
+function connectionReady(provider = state?.settings.provider) { const account = chatgptState(); return provider === 'chatgpt' ? !!(account.connected && account.sharing && !chatgptNeedsSignIn(account)) : !!state?.keyStatus?.[provider]; }
 function focusQuestion() { if (!document.querySelector('dialog[open]') && !state?.settings.compact) question.focus(); }
 // Only a real pointer action on our own editable field may request OS focus.
 // DOM focus during state updates, image attachment, or recovery stays passive.
@@ -89,7 +94,7 @@ function richText(element, text) {
 function createMessage(role, text, metadata = {}) {
   const card = document.createElement('article'); card.className = `message ${role}`;
   const header = document.createElement('div'); header.className = 'message-header';
-  const label = document.createElement('span'); label.textContent = role === 'user' ? 'YOU' : metadata.provider === 'openai' ? 'CHATGPT' : metadata.provider === 'gemini' ? 'GEMINI' : 'CLAUDE'; header.append(label);
+  const label = document.createElement('span'); label.textContent = role === 'user' ? 'YOU' : metadata.provider === 'chatgpt' ? 'CHATGPT PLAN' : metadata.provider === 'openai' ? 'CHATGPT' : metadata.provider === 'gemini' ? 'GEMINI' : 'CLAUDE'; header.append(label);
   if (role === 'assistant' && metadata.model) { const model = document.createElement('span'); model.className = 'model-label'; model.textContent = metadata.model; header.append(model); }
   card.append(header);
   const imageNames = metadata.imageNames || metadata.images?.map(image => image.name) || (metadata.imageName ? [metadata.imageName] : []);
@@ -120,6 +125,10 @@ function showFailure(view, attempt) {
     resizeQuestion(); updateControls(); focusQuestion();
     notify('Attach the original images again, then send the question.');
   })); view.card.append(retry);
+  if (attempt.provider === 'chatgpt' && (attempt.action === 'manage-usage' || attempt.code === 'subscription_sharing_usage_limit_exceeded')) {
+    const usage = document.createElement('button'); usage.type = 'button'; usage.className = 'retry-button manage-usage-button'; usage.textContent = 'Manage ChatGPT usage';
+    usage.addEventListener('click', guard(() => call('chatgptManageUsage'))); view.card.append(usage);
+  }
   if (attempt.text) addCopy(view.card, attempt.text);
 }
 function renderTimeline() {
@@ -144,8 +153,9 @@ function updateControls() {
   const busy = sending || !!state?.busy;
   $('sendButton').disabled = busy || importing || !(question.value.trim() || attachments.length);
   $('provider').disabled = busy;
-  $('quickModel').disabled = busy;
-  $('quickEffort').disabled = busy || !$('quickEffort').options.length || $('quickEffort').options.length === 1;
+  const accountUnavailable = state?.settings.provider === 'chatgpt' && (!connectionReady() || !state?.modelCatalog?.chatgpt?.length || chatgptState().busy || chatgptActionPending);
+  $('quickModel').disabled = busy || accountUnavailable;
+  $('quickEffort').disabled = busy || accountUnavailable || !$('quickEffort').options.length || $('quickEffort').options.length === 1;
   $('newChatButton').disabled = busy || importing || !!state?.captureBusy;
   $('newChatButton').title = busy ? 'Stop the answer before starting a new chat' : 'Save this conversation and start a new one';
   $('openChatButton').disabled = busy || !$('chatSelect').value;
@@ -156,6 +166,49 @@ function updateControls() {
   document.querySelectorAll('.remove-image').forEach(button => { button.disabled = importing || sending; });
   $('requestStatus').hidden = !busy;
   $('footerStatus').textContent = busy ? 'Answering your question' : state?.passThrough ? 'Click-through enabled' : state?.panelBehavior?.typingRequiresActivation ? state.panelBehavior.keyboardFocus ? 'Typing in overlay · click browser to return' : 'Browser focus preserved · click question to type' : `Runs in your ${state?.platform.trayName || 'tray'}`;
+  renderChatGPTConnection();
+}
+function renderChatGPTConnection() {
+  const account = chatgptState(), profiles = account.profiles || [];
+  const selected = selectedChatGPTProfile(account);
+  const busy = !!state?.busy || !!account.busy || chatgptActionPending;
+  const name = selected?.label || selected?.email || 'ChatGPT connection';
+  $('chatgptConnection').hidden = $('settingsProvider').value !== 'chatgpt';
+  $('chatgptAccountStrip').hidden = state?.settings.provider !== 'chatgpt';
+  $('chatgptUsageLabel').textContent = `${chatgptNeedsSignIn(account) ? 'Reconnect ChatGPT' : connectionReady('chatgpt') ? 'Using ChatGPT plan' : account.connected ? 'ChatGPT plan usage not enabled' : 'Connect ChatGPT'}${selected ? ` · ${name}` : ''}`;
+  $('chatgptAccountButton').title = $('chatgptUsageLabel').textContent;
+  $('chatgptQuickUsage').hidden = !account.connected;
+  $('chatgptProfile').replaceChildren(...profiles.map((profile, index) => new Option(profile.label || profile.email || `ChatGPT connection ${index + 1}`, profile.id)));
+  $('chatgptProfile').value = account.activeProfileId || '';
+  $('chatgptProfileLabel').hidden = !profiles.length;
+  $('chatgptProfile').disabled = busy || profiles.length < 2;
+  $('chatgptConnectionStatus').textContent = chatgptActionPending && !chatgptSigningIn ? 'Updating ChatGPT connection…'
+    : chatgptSigningIn ? 'Complete sign-in in your browser. You can cancel here.'
+      : account.busy ? 'Updating ChatGPT connection…'
+    : chatgptNeedsSignIn(account) ? 'This connection needs a new sign-in.'
+      : account.connected && account.sharing ? `Connected · ${name}. Using ChatGPT plan.`
+        : account.connected ? `Signed in · ${name}. Enable ChatGPT plan usage to ask questions.` : 'Connect a ChatGPT account to use an eligible plan.';
+  $('chatgptSignInButton').textContent = selected ? 'Reconnect with ChatGPT' : 'Continue with ChatGPT';
+  $('chatgptSignInButton').disabled = busy;
+  $('chatgptAddAccount').hidden = !profiles.length;
+  $('chatgptAddAccount').disabled = busy;
+  $('chatgptEnableUsage').hidden = !account.connected || account.sharing;
+  $('chatgptEnableUsage').disabled = busy;
+  $('chatgptCancelSignIn').hidden = !chatgptSigningIn;
+  $('chatgptSignOut').hidden = !selected;
+  $('chatgptSignOut').disabled = !!account.busy || chatgptActionPending;
+  $('chatgptConnectionError').textContent = chatgptActionError || account.error || '';
+  $('chatgptConnectionError').hidden = !$('chatgptConnectionError').textContent;
+  $('saveButton').disabled = settingsSaving || ($('settingsProvider').value === 'chatgpt' && (!!account.busy || chatgptActionPending));
+}
+async function chatgptAction(method, ...args) {
+  if (chatgptActionPending) return;
+  chatgptActionPending = true; chatgptSigningIn = method === 'chatgptSignIn'; chatgptActionError = ''; renderChatGPTConnection();
+  try {
+    const value = await call(method, ...args);
+    applyState(value?.settings ? value : await call('state'));
+  } catch (error) { chatgptActionError = error.message; }
+  finally { chatgptActionPending = false; chatgptSigningIn = false; renderChatGPTConnection(); renderCatalogStatus(); updateControls(); }
 }
 function renderRecovery() {
   const recovery = state?.recovery;
@@ -200,9 +253,12 @@ function applyState(value) {
   $('chatSelect').replaceChildren(new Option('Choose a previous chat…', ''));
   for (const chat of state.archivedChats || []) $('chatSelect').append(new Option(chat.title, chat.id));
   if ((state.archivedChats || []).some(chat => chat.id === selectedChat)) $('chatSelect').value = selectedChat;
-  $('setupNote').hidden = state.keyStatus[state.settings.provider];
+  const chatgptSelected = state.settings.provider === 'chatgpt';
+  $('setupNote').hidden = connectionReady();
+  $('setupLead').textContent = chatgptSelected ? chatgptNeedsSignIn() ? 'Reconnect your ChatGPT account in ' : 'Connect your ChatGPT account in ' : 'Add your API key in ';
+  $('setupTail').textContent = chatgptSelected ? ' to use your plan.' : ' to get started.';
   $('settingsWarnings').textContent = state.warnings.join('\n'); $('settingsWarnings').hidden = !state.warnings.length;
-  renderTimeline(); updateControls(); renderRecovery();
+  renderTimeline(); updateControls(); renderRecovery(); window.overlaySelects?.refresh();
 }
 function renderAttachments() {
   $('attachment').hidden = !attachments.length;
@@ -251,7 +307,8 @@ async function loadAttachments(action) {
 }
 async function submit(input = { text: question.value, imageIds: attachments.map(image => image.id) }) {
   if (sending || importing || state?.busy) return;
-  if (!state?.keyStatus[state.settings.provider]) { openSettings(); notify('Add your API key to start answering questions.'); return; }
+  if (!connectionReady()) { openSettings(); notify(state?.settings.provider === 'chatgpt' ? chatgptNeedsSignIn() ? 'Reconnect ChatGPT in Settings to start answering questions.' : 'Connect ChatGPT and enable plan usage to start answering questions.' : 'Add your API key to start answering questions.'); return; }
+  if (state.settings.provider === 'chatgpt' && !selectedModelInfo('chatgpt', models.chatgpt)) { openSettings(); notify('Choose an available ChatGPT model in Settings before asking.'); return; }
   if (!input.text?.trim() && !input.imageId && !input.imageIds?.length) return;
   sending = true; updateControls(); autoScroll = true;
   try {
@@ -263,12 +320,16 @@ function resizeQuestion() { question.style.height = 'auto'; question.style.heigh
 function populateKeyFields() {
   const provider = $('settingsProvider').value;
   fillModelOptions($('modelPreset'), provider, models[provider], true);
-  $('model').value = models[provider]; $('apiKey').value = '';
+  $('model').value = models[provider] || ''; $('apiKey').value = '';
   updateCustomModel();
   $('openaiNote').hidden = provider !== 'openai';
   $('apiKey').placeholder = state?.keyStatus[provider] ? 'Leave blank to keep your saved key' : 'Paste your API key';
   $('keyBadge').textContent = state?.keyStatus[provider] ? 'Key saved' : 'No key yet';
-  $('removeKey').hidden = !state?.keyStatus[provider];
+  $('apiKeyLabel').hidden = provider === 'chatgpt';
+  $('apiKey').disabled = provider === 'chatgpt';
+  $('removeKey').hidden = provider === 'chatgpt' || !state?.keyStatus[provider];
+  $('modelHint').textContent = provider === 'chatgpt' ? 'Available models for this ChatGPT connection, in the order provided by your account.' : 'Available chat models from your API account. Text-only models are marked.';
+  renderChatGPTConnection();
   renderCatalogStatus();
 }
 const effortLabels = { auto: 'Auto', none: 'None', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
@@ -279,7 +340,7 @@ function fillEffortOptions(select, provider, model, current = state?.settings.re
   select.replaceChildren(new Option(quick ? 'Effort: Auto' : levels.length ? 'Auto · provider default' : 'Auto · no adjustable effort', 'auto'),
     ...levels.map(value => new Option(`${quick ? 'Effort: ' : ''}${effortLabels[value] || value}`, value)));
   select.value = levels.includes(current) ? current : 'auto';
-  select.disabled = !levels.length || (quick && (sending || !!state?.busy));
+  select.disabled = !levels.length || (provider === 'chatgpt' && !connectionReady(provider)) || (quick && (sending || !!state?.busy));
   if (!quick) {
     const info = selectedModelInfo(provider, model);
     $('reasoningHint').textContent = !levels.length ? 'This model has no verified adjustable effort options. Auto uses its default behavior.'
@@ -287,36 +348,55 @@ function fillEffortOptions(select, provider, model, current = state?.settings.re
         : 'Higher effort can take longer and cost more. Saved separately for each model.';
   }
 }
-let settingsCatalogSignature = '';
+let settingsCatalogSignature = '', settingsCatalogProfile = null;
 function renderCatalogStatus() {
   const provider = $('settingsProvider').value, status = state?.modelStatus?.[provider];
   const count = state?.modelCatalog?.[provider]?.length || 0;
-  $('refreshModels').disabled = !state?.keyStatus[provider] || !!status?.refreshing;
+  const chatgpt = provider === 'chatgpt', account = chatgptState();
+  $('refreshModels').disabled = !connectionReady(provider) || !!status?.refreshing || (chatgpt && (account.busy || chatgptActionPending));
+  $('refreshModels').textContent = chatgpt ? 'Refresh ChatGPT models' : 'Refresh models / check key';
   $('keyBadge').textContent = !state?.keyStatus[provider] ? 'No key yet' : status?.source === 'live' && !status.error ? 'API access verified' : 'Key saved';
   const checked = status?.checkedAt ? new Date(status.checkedAt).toLocaleString() : '';
-  $('modelStatus').textContent = status?.refreshing ? 'Checking API access and refreshing models…'
+  $('modelStatus').textContent = chatgpt ? status?.refreshing ? 'Refreshing models for this ChatGPT connection…'
+    : !account.connected ? 'Continue with ChatGPT to load the models available to your account.'
+      : !account.sharing ? 'Enable ChatGPT plan usage to load available models.'
+        : status?.error ? `${status.error}${count ? ' Previously loaded models remain available.' : ''}`
+          : status?.checkedAt ? `${count} models for this connection. ${status.source === 'cached' ? 'Cached' : 'Updated'} ${checked}.`
+            : 'Refresh models to check what this connection can use.'
+    : status?.refreshing ? 'Checking API access and refreshing models…'
     : status?.error ? `${status.error} Previous models remain available.`
       : status?.checkedAt ? `${count} chat models · ${status.total} total API models. ${status.source === 'cached' ? 'Cached' : 'Verified'} ${checked}.`
         : 'Save a key to load its available models. The starting list is shown until refreshed.';
-  const signature = `${provider}/${status?.checkedAt}/${status?.source}`;
+  const signature = `${provider}/${status?.checkedAt}/${status?.source}/${chatgpt ? account.activeProfileId : ''}/${(state?.modelCatalog?.[provider] || []).map(item => item.id).join(',')}`;
   if (settingsCatalogSignature !== signature) {
     settingsCatalogSignature = signature;
-    const current = $('model').value || models[provider], effort = $('reasoningEffort').value;
+    const changedProfile = chatgpt && settingsCatalogProfile !== account.activeProfileId;
+    const current = changedProfile ? models[provider] : $('model').value || models[provider], effort = changedProfile ? undefined : $('reasoningEffort').value;
+    settingsCatalogProfile = chatgpt ? account.activeProfileId : null;
     fillModelOptions($('modelPreset'), provider, current, true);
     updateCustomModel();
     fillEffortOptions($('reasoningEffort'), provider, current, effort || undefined);
   }
+  if (chatgpt) $('modelPreset').disabled = settingsSaving || !connectionReady(provider) || !count || !!account.busy || chatgptActionPending;
 }
 function fillModelOptions(select, provider, current, settingsMenu = false) {
   const options = (state?.modelCatalog?.[provider] || []).map(model => new Option(model.name, model.id));
   const known = options.some(option => option.value === current);
+  if (provider === 'chatgpt') {
+    if (!known) options.unshift(new Option(options.length ? 'Choose a ChatGPT model' : 'Connect ChatGPT to load models', ''));
+    select.replaceChildren(...options);
+    select.value = known ? current : '';
+    select.disabled = settingsSaving || !connectionReady(provider) || !state?.modelCatalog?.chatgpt?.length || !!state?.busy || !!chatgptState().busy || chatgptActionPending;
+    return;
+  }
   if (current && !known && !settingsMenu) options.unshift(new Option(`${current} · custom`, current));
   if (settingsMenu) options.push(new Option('Custom model ID…', '__custom__'));
   select.replaceChildren(...options);
   select.value = settingsMenu && !known ? '__custom__' : current;
+  select.disabled = settingsSaving || (!settingsMenu && (sending || !!state?.busy));
 }
 function updateCustomModel() {
-  const custom = $('modelPreset').value === '__custom__';
+  const custom = $('settingsProvider').value !== 'chatgpt' && $('modelPreset').value === '__custom__';
   $('customModelLabel').hidden = !custom;
   $('model').required = custom;
   if (!custom) $('model').value = $('modelPreset').value;
@@ -344,6 +424,7 @@ function openSettings() {
   $('displaySelect').value = selectedDisplay;
   $('settingsError').hidden = true;
   if (!$('settingsDialog').open) $('settingsDialog').showModal();
+  window.overlaySelects?.refresh();
 }
 
 api.onEvent(event => {
@@ -408,6 +489,28 @@ $('settingsButton').addEventListener('click', openSettings); $('setupButton').ad
 $('closeSettings').addEventListener('click', () => { $('apiKey').value = ''; $('settingsDialog').close(); });
 $('settingsDialog').addEventListener('close', () => { $('apiKey').value = ''; });
 $('settingsProvider').addEventListener('change', populateKeyFields);
+$('chatgptAccountButton').addEventListener('click', openSettings);
+$('chatgptSignInButton').addEventListener('click', () => chatgptAction('chatgptSignIn', { ...(chatgptState().activeProfileId ? { profileId: chatgptState().activeProfileId } : { newProfile: true }) }));
+$('chatgptAddAccount').addEventListener('click', () => chatgptAction('chatgptSignIn', { newProfile: true }));
+$('chatgptEnableUsage').addEventListener('click', () => chatgptAction('chatgptSignIn', { profileId: chatgptState().activeProfileId, consent: true }));
+$('chatgptCancelSignIn').addEventListener('click', guard(async () => {
+  const value = await call('chatgptCancelSignIn');
+  applyState(value?.settings ? value : await call('state'));
+}));
+$('chatgptProfile').addEventListener('change', () => chatgptAction('chatgptSelectProfile', $('chatgptProfile').value));
+for (const id of ['chatgptManageUsage', 'chatgptQuickUsage']) $(id).addEventListener('click', guard(() => call('chatgptManageUsage')));
+$('chatgptSignOut').addEventListener('click', () => {
+  signingOutProfile = chatgptState().activeProfileId;
+  const profile = (chatgptState().profiles || []).find(item => item.id === signingOutProfile);
+  if (!profile) return;
+  $('chatgptSignOutLabel').textContent = profile.label || profile.email || 'This ChatGPT connection';
+  $('chatgptSignOutDialog').showModal();
+});
+$('cancelChatGPTSignOut').addEventListener('click', () => { signingOutProfile = null; $('chatgptSignOutDialog').close(); });
+$('confirmChatGPTSignOut').addEventListener('click', async () => {
+  const profile = signingOutProfile; signingOutProfile = null; $('chatgptSignOutDialog').close();
+  if (profile) await chatgptAction('chatgptSignOut', profile);
+});
 $('modelPreset').addEventListener('change', updateCustomModel);
 $('model').addEventListener('input', updateCustomModel);
 $('refreshModels').addEventListener('click', guard(async () => {
@@ -431,21 +534,23 @@ $('settingsForm').addEventListener('submit', async event => {
   event.preventDefault();
   if ($('saveButton').disabled) return;
   $('settingsError').hidden = true;
+  settingsSaving = true;
   const controls = [...$('settingsForm').querySelectorAll('input, select, button')].map(control => [control, control.disabled]);
   try {
     const provider = $('settingsProvider').value;
     const model = $('model').value.trim();
     const input = { provider, models: { [provider]: model }, reasoningEfforts: { [provider]: { [model]: $('reasoningEffort').value } }, opacity: Number($('opacity').value) / 100, codeOpacity: Number($('codeOpacity').value) / 100, launchAtLogin: $('launchAtLogin').checked, rememberHistory: $('rememberHistory').checked, hideFromCapture: $('hideFromCapture').checked, protectFromQuit: $('protectFromQuit').checked };
-    if ($('apiKey').value.trim()) input.apiKey = $('apiKey').value.trim();
+    if (provider === 'chatgpt' && !model) { delete input.models; delete input.reasoningEfforts; }
+    if (provider !== 'chatgpt' && $('apiKey').value.trim()) input.apiKey = $('apiKey').value.trim();
     controls.forEach(([control]) => { control.disabled = true; });
     $('saveButton').textContent = input.apiKey ? 'Verifying and saving key…' : 'Saving…';
     applyState(await call('saveSettings', input));
     selectedDisplay = $('displaySelect').value; sessionStorage.setItem('display', selectedDisplay);
     $('apiKey').value = ''; $('settingsDialog').close(); notify(input.apiKey ? 'Key verified and saved on this device.' : 'Settings saved.');
   } catch (error) { $('settingsError').textContent = error.message; $('settingsError').hidden = false; }
-  finally { controls.forEach(([control, disabled]) => { control.disabled = disabled; }); $('saveButton').textContent = 'Save settings'; }
+  finally { settingsSaving = false; controls.forEach(([control, disabled]) => { control.disabled = disabled; }); $('saveButton').textContent = 'Save settings'; renderChatGPTConnection(); }
 });
-$('removeKey').addEventListener('click', guard(async () => { applyState(await call('saveSettings', { provider: $('settingsProvider').value, removeKey: true })); populateKeyFields(); notify('Saved key removed.'); }));
+$('removeKey').addEventListener('click', guard(async () => { if ($('settingsProvider').value === 'chatgpt') return; applyState(await call('saveSettings', { provider: $('settingsProvider').value, removeKey: true })); populateKeyFields(); notify('Saved key removed.'); }));
 $('exportButton').addEventListener('click', guard(async () => { if (await call('export')) notify('Conversation exported.'); }));
 $('clearButton').addEventListener('click', () => { $('clearDialog').showModal(); });
 $('cancelClear').addEventListener('click', () => $('clearDialog').close());

@@ -17,6 +17,38 @@ test('live catalogs keep chat models, flag text-only IDs, and exclude retired/sp
   assert.deepEqual(normalizeModels('gemini', [{ name: 'models/gemini-3.8-flash', supportedGenerationMethods: ['bidiGenerateContent'] }]), []);
 });
 
+test('ChatGPT catalogs use account slugs, listed visibility and server ordering without bundled entitlements', async () => {
+  assert.deepEqual(MODEL_CATALOG.chatgpt, []);
+  const items = [
+    { slug: 'account-z', display_name: 'Workspace model Z', visibility: 'list', input_modalities: ['text', 'image'], supported_reasoning_efforts: ['low', 'high'] },
+    { slug: 'hidden-model', visibility: 'hidden' },
+    { slug: 'account-a', display_name: 'Workspace model A', visibility: 'list' },
+    { slug: 'account-z', visibility: 'list' },
+    { id: 'api-key-schema-model', visibility: 'list' },
+    { slug: '../unsafe', visibility: 'list' }
+  ];
+  let calls = 0;
+  const catalog = await listProviderModels('chatgpt', 'private-oauth-token', { fetchImpl: async (url, input) => {
+    calls++;
+    assert.equal(url, 'https://api.openai.com/v1/models');
+    assert.equal(input.headers.Authorization, 'Bearer private-oauth-token');
+    assert.equal(input.redirect, 'error');
+    return json({ models: items });
+  } });
+  assert.equal(calls, 1);
+  assert.deepEqual(catalog.models.map(model => model.id), ['account-z', 'account-a']);
+  assert.deepEqual(catalog.models.map(model => model.name), ['Workspace model Z', 'Workspace model A']);
+  assert.equal(catalog.models[0].vision, true);
+  assert.deepEqual(catalog.models[0].reasoningEfforts, ['low', 'high']);
+  assert.equal(catalog.models[1].vision, null, 'Unknown capabilities must not be inferred from model names or treated as a denial');
+  assert.deepEqual(catalog.models[1].reasoningEfforts, []);
+  assert.equal(modelDetails('chatgpt', 'gpt-6.1-sol').vision, null);
+  assert.equal(modelDetails('chatgpt', 'account-model', { input_modalities: ['text'] }).vision, false);
+  assert.equal(modelDetails('chatgpt', 'account-model', { capabilities: { image_input: { supported: false } } }).vision, false);
+  assert.deepEqual(modelDetails('chatgpt', 'gpt-6.1-sol').reasoningEfforts, []);
+  await assert.rejects(listProviderModels('chatgpt', 'private-oauth-token', { fetchImpl: async () => json({ data: [{ id: 'api-model' }] }) }), /invalid model catalog/);
+});
+
 test('live Claude capability flags override model-name inference and legacy models use budgets', () => {
   const info = modelDetails('anthropic', 'claude-opus-5-5', { capabilities: { effort: { supported: true, low: { supported: true }, medium: { supported: true }, high: { supported: true }, max: { supported: false } }, thinking: { types: { adaptive: { supported: true } } } } });
   assert.deepEqual(info.reasoningEfforts, ['low', 'medium', 'high']);

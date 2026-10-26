@@ -30,11 +30,25 @@ test('preferences reject unsafe input and do not mutate defaults', () => {
 });
 test('model menus include each provider default and still permit custom vision model IDs', () => {
   for (const provider of PROVIDERS) {
-    assert.ok(MODEL_CATALOG[provider].some(model => model.id === DEFAULTS.models[provider]));
+    if (provider === 'chatgpt') {
+      assert.deepEqual(MODEL_CATALOG[provider], [], 'Subscription model access is discovered only after connecting an account');
+      assert.equal(DEFAULTS.models.chatgpt, 'chatgpt-auto');
+    } else assert.ok(MODEL_CATALOG[provider].some(model => model.id === DEFAULTS.models[provider]));
     assert.equal(new Set(MODEL_CATALOG[provider].map(model => model.id)).size, MODEL_CATALOG[provider].length);
     for (const model of MODEL_CATALOG[provider]) assert.equal(validateSettings({models:{[provider]:model.id}}).models[provider],model.id);
     assert.equal(validateSettings({models:{[provider]:'custom-vision-2026'}}).models[provider],'custom-vision-2026');
   }
+});
+
+test('ChatGPT settings and completed history stay separate from API-key preferences', () => {
+  const migrated = validateSettings({}, { provider: 'openai', models: { openai: 'gpt-6.1-sol' } });
+  assert.equal(migrated.provider, 'openai');
+  assert.equal(migrated.models.chatgpt, 'chatgpt-auto');
+  const connected = validateSettings({ provider: 'chatgpt', models: { chatgpt: 'account-model' }, reasoningEfforts: { chatgpt: { 'account-model': 'high' } } }, migrated);
+  assert.equal(connected.models.openai, 'gpt-6.1-sol');
+  assert.equal(connected.reasoningEfforts.chatgpt['account-model'], 'high');
+  const history = [{ id: 'question', role: 'user', text: 'Hello' }, { id: 'answer', role: 'assistant', text: 'Hi', provider: 'chatgpt', model: 'account-model' }];
+  assert.equal(validateHistory(diskHistory(history))[1].provider, 'chatgpt');
 });
 test('code box opacity defaults to full opacity and migrates existing profiles independently', () => {
   assert.equal(DEFAULTS.codeOpacity, 1);

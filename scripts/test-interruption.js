@@ -28,6 +28,8 @@ void (async () => {
       new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error('Checkpoint fixture timed out.')), 25000); })
     ]);
   } finally { clearTimeout(timer); }
+  // Let a fresh Electron profile finish persisting its native encryption state.
+  await new Promise(resolve => setTimeout(resolve, 10000));
   writer.kill('SIGKILL');
   const [code, signal] = await exit;
   assert.ok(signal === 'SIGKILL' || (process.platform === 'win32' && code !== 0));

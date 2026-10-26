@@ -1,4 +1,8 @@
-# OpenCluely Overlay 2.3.8 for Windows
+# OpenCluely Overlay 2.4.1 for Windows
+
+Version 2.4 adds a separate **ChatGPT account** connection with browser sign-in, encrypted sessions, saved account switching and account-specific model discovery. See [ChatGPT setup and credential handling](docs/CHATGPT-SIGN-IN.md). This is a local build; the published 2.3.8 downloads below are the previous release.
+
+Version 2.4.1 replaces Windows native dropdown popups with in-window menus so provider, model, reasoning and saved-account choices work while the overlay preserves browser focus.
 
 Windows desktop assistant for text and image questions using **OpenAI / ChatGPT, Claude, or Gemini**, adapted from the updated [Mac version](https://github.com/luffy-taro-106/mac-godsplan).
 

@@ -9,6 +9,7 @@ const { pathToFileURL } = require('node:url');
 const { DEFAULTS, MAX_IMAGE_BYTES, MAX_IMAGES, imageIds, imageNames, validateSettings, validateQuestion, inspectImage, clampBounds, boundedContext, diskHistory, validateHistory } = require('./core');
 const { streamAnswer, validateApiKey, listProviderModels } = require('./providers');
 const { Store } = require('./storage');
+const { ChatGPTAuth } = require('./chatgpt-auth');
 const { InterruptedWork } = require('./interrupted-work');
 const { QuitGuard } = require('./quit-guard');
 const { WindowsRecovery, recoverySession } = require('./recovery');
@@ -36,6 +37,7 @@ let panel = null;
 let screenshotRestore = true;
 let launchHidden = false;
 let recovery, interruptedWork, initializationComplete = false;
+let chatgpt, loadedChatGPTProfile = null, chatgptSessionEpoch = 0, pendingAsk = null;
 let recoveryBeforeSessionEnd = false;
 let archivedChats = [];
 const images = new Map(), warnings = [], recoveryTimes = [], shortcuts = [];
@@ -99,12 +101,13 @@ function canStartAtLogin() {
 function screenPermission() { return screenPermissionFunction(); }
 function currentState() {
   return {
-    settings, history: diskHistory(history), passThrough, panelBehavior: panel?.status() || { available: false, preventsActivation: false }, busy: !!active, captureBusy,
+    settings, history: diskHistory(history), passThrough, panelBehavior: panel?.status() || { available: false, preventsActivation: false }, busy: !!active || !!pendingAsk, captureBusy,
     active: active ? { id: active.id, question: active.question, text: active.text, images: active.images.map(publicImage), provider: active.provider, model: active.model } : null,
     lastAttempt: lastAttempt ? { ...lastAttempt, images: imageIds(lastAttempt.question).map(id => images.get(id)).filter(Boolean).map(publicImage) } : null,
     maxImages: MAX_IMAGES,
     draftImages: [...draftImageIds].map(id => images.get(id)).filter(Boolean).map(publicImage),
-    keyStatus: Object.fromEntries(PROVIDERS.map(provider => [provider, !!keys[provider]])),
+    keyStatus: Object.fromEntries(PROVIDERS.map(provider => [provider, provider === 'chatgpt' ? !!chatgpt?.publicState().sharing : !!keys[provider]])),
+    chatgpt: chatgpt?.publicState() || { profiles: [], activeProfileId: null, connected: false, sharing: false, busy: false, error: '' },
     modelCatalog, modelStatus,
     archivedChats: archivedChats.map(({ id, title, updatedAt }) => ({ id, title, updatedAt })),
     secureStorage: store.available(), warnings, shortcuts, platform,
@@ -117,6 +120,50 @@ function currentState() {
 }
 function syncState() { emit({ type: 'state', value: currentState() }); updateTray(); }
 
+function validCachedModels(entry) {
+  return entry && Array.isArray(entry.models) && entry.models.length <= 1000 && Number.isFinite(entry.total) && Number.isFinite(Date.parse(entry.checkedAt)) &&
+    entry.models.every(model => model && validModelId(model.id) && typeof model.name === 'string' && model.name.length <= 250 &&
+      Array.isArray(model.reasoningEfforts) && model.reasoningEfforts.every(value => EFFORTS.includes(value) && value !== 'auto') &&
+      [null, 'effort', 'thinkingLevel', 'thinkingBudget'].includes(model.reasoningMode) && [null, 'adaptive', 'enabled'].includes(model.thinking) && (typeof model.vision === 'boolean' || model.vision === null));
+}
+function loadChatGPTProfile(force = false) {
+  const account = chatgpt?.publicState();
+  const id = account?.activeProfileId || null;
+  if (!force && loadedChatGPTProfile === id) return;
+  loadedChatGPTProfile = id;
+  const preferences = id ? chatgpt.getProfilePreferences() : {};
+  settings.models.chatgpt = validModelId(preferences.model) ? preferences.model : 'chatgpt-auto';
+  settings.reasoningEfforts.chatgpt = Object.fromEntries(Object.entries(preferences.reasoningEfforts || {}).filter(([model, effort]) => validModelId(model) && EFFORTS.includes(effort)).slice(0, 500));
+  modelCatalog.chatgpt = account?.sharing && validCachedModels(preferences) ? structuredClone(preferences.models) : [];
+  delete modelStatus.chatgpt;
+  if (modelCatalog.chatgpt.length) modelStatus.chatgpt = { source: 'cached', total: preferences.total, checkedAt: preferences.checkedAt, refreshing: false, error: '' };
+}
+function chatGPTChanged() {
+  if (!settings || !chatgpt) return;
+  loadChatGPTProfile();
+  if (!chatgpt.publicState().sharing) { modelCatalog.chatgpt = []; delete modelStatus.chatgpt; }
+  if (win && !quitting) syncState();
+}
+async function changeChatGPTConnection(action, { signOut = false, stopAnswer = true } = {}) {
+  if (signOut && stopAnswer && pendingAsk) { pendingAsk.controller.abort(); await pendingAsk.done; }
+  if (settingsBusy) throw new Error('Wait for the current settings or sign-in operation.');
+  if (active && !signOut) throw new Error('Stop the current answer before changing ChatGPT accounts.');
+  if (signOut && stopAnswer && active?.provider === 'chatgpt') active.controller.abort();
+  settingsBusy = true;
+  chatgptSessionEpoch++;
+  try {
+    const result = await action();
+    loadChatGPTProfile(true);
+    if (!signOut) settings.provider = 'chatgpt';
+    persistSettings();
+    if (result?.warning) emit({ type: 'notice', text: result.warning });
+    if (chatgpt.publicState().sharing) await refreshModels('chatgpt');
+    if (!quitting) showOverlay(false);
+    syncState();
+    return currentState();
+  } finally { settingsBusy = false; }
+}
+
 function persistModelCatalog() {
   try {
     store.write('model-catalog.json', Object.fromEntries(PROVIDERS.filter(provider => keys[provider] && modelStatus[provider]?.checkedAt)
@@ -127,10 +174,7 @@ function restoreModelCatalog() {
   const cached = store.read('model-catalog.json', {});
   for (const provider of PROVIDERS) {
     const entry = cached?.[provider];
-    if (!keys[provider] || !entry || !Array.isArray(entry.models) || entry.models.length > 1000 || !Number.isFinite(entry.total) || !Number.isFinite(Date.parse(entry.checkedAt))) continue;
-    if (!entry.models.every(model => model && validModelId(model.id) && typeof model.name === 'string' && model.name.length <= 250 &&
-      Array.isArray(model.reasoningEfforts) && model.reasoningEfforts.every(value => EFFORTS.includes(value) && value !== 'auto') &&
-      [null, 'effort', 'thinkingLevel', 'thinkingBudget'].includes(model.reasoningMode) && [null, 'adaptive', 'enabled'].includes(model.thinking) && typeof model.vision === 'boolean')) continue;
+    if (provider === 'chatgpt' || !keys[provider] || !validCachedModels(entry)) continue;
     modelCatalog[provider] = entry.models;
     modelStatus[provider] = { source: 'cached', total: entry.total, checkedAt: entry.checkedAt, refreshing: false, error: '' };
   }
@@ -138,6 +182,7 @@ function restoreModelCatalog() {
 async function refreshModels(provider = null) {
   if (provider !== null && !PROVIDERS.includes(provider)) throw new Error('Choose a valid AI provider.');
   await Promise.all((provider ? [provider] : PROVIDERS).map(async selected => {
+    if (selected === 'chatgpt') return refreshChatGPTModels();
     const apiKey = keys[selected];
     if (!apiKey) return;
     if (modelRefreshes.get(selected)?.apiKey === apiKey) return modelRefreshes.get(selected).promise;
@@ -163,6 +208,37 @@ async function refreshModels(provider = null) {
     return task.promise;
   }));
   return currentState();
+}
+async function refreshChatGPTModels() {
+  const account = chatgpt?.publicState();
+  if (!account?.sharing) return;
+  const profileId = account.activeProfileId, epoch = chatgptSessionEpoch;
+  const previous = modelRefreshes.get('chatgpt');
+  if (previous?.profileId === profileId && previous.epoch === epoch) return previous.promise;
+  const task = { profileId, epoch };
+  const isCurrent = () => epoch === chatgptSessionEpoch && profileId === chatgpt.publicState().activeProfileId && chatgpt.publicState().sharing;
+  modelStatus.chatgpt = { ...modelStatus.chatgpt, refreshing: true, error: '' };
+  task.promise = (async () => {
+    try {
+      const token = await chatgpt.accessToken();
+      const result = await modelLister('chatgpt', token);
+      if (!isCurrent()) return;
+      const preferences = { models: result.models, total: result.total, checkedAt: result.checkedAt };
+      if (settings.models.chatgpt === 'chatgpt-auto' && result.models[0]) preferences.model = result.models[0].id;
+      chatgpt.setProfilePreferences(preferences, profileId);
+      if (preferences.model) { settings.models.chatgpt = preferences.model; persistSettings(); }
+      modelCatalog.chatgpt = result.models;
+      modelStatus.chatgpt = { source: 'live', total: result.total, checkedAt: result.checkedAt, refreshing: false, error: '' };
+    } catch (error) {
+      if (isCurrent()) modelStatus.chatgpt = { ...modelStatus.chatgpt, refreshing: false, error: error.message };
+    } finally {
+      if (modelRefreshes.get('chatgpt') === task) modelRefreshes.delete('chatgpt');
+      if (!quitting) syncState();
+    }
+  })();
+  modelRefreshes.set('chatgpt', task);
+  syncState();
+  return task.promise;
 }
 async function setRecoveryEnabled(enabled) {
   if (typeof enabled !== 'boolean') throw new Error('Choose whether automatic reopening is on or off.');
@@ -424,12 +500,25 @@ async function ask(input) {
   if (active) throw new Error('An answer is already running. Stop it before asking another question.');
   if (settingsBusy) throw new Error('Settings are being saved. Please try again.');
   const question = validateQuestion(input);
-  const provider = settings.provider, model = settings.models[provider], apiKey = keys[provider];
-  if (!apiKey) throw new Error(`Add your ${PROVIDER_NAMES[provider]} API key in Settings first.`);
+  const provider = settings.provider, model = settings.models[provider];
+  let apiKey = keys[provider];
+  if (provider === 'chatgpt') {
+    if (!chatgpt.publicState().connected) throw new Error('Continue with ChatGPT in Settings to connect your account.');
+    if (!chatgpt.publicState().sharing) throw new Error('Enable ChatGPT plan usage in Settings before asking a question.');
+    if (!modelCatalog.chatgpt.some(item => item.id === model)) throw new Error('Refresh your ChatGPT models and choose an available model in Settings.');
+    // Reserve the composer while a refresh is in progress so duplicate asks or
+    // account changes cannot race token acquisition before active is assigned.
+    settingsBusy = true;
+    let settled;
+    const pending = { controller: new AbortController(), done: new Promise(resolve => { settled = resolve; }) };
+    pendingAsk = pending; syncState();
+    try { apiKey = await chatgpt.accessToken({ signal: pending.controller.signal }); pending.controller.signal.throwIfAborted(); }
+    finally { pendingAsk = null; settingsBusy = false; settled(); syncState(); }
+  } else if (!apiKey) throw new Error(`Add your ${PROVIDER_NAMES[provider]} API key in Settings first.`);
   const attachments = question.imageIds.map(id => images.get(id));
   if (attachments.some(image => !image)) throw new Error('An attachment expired. Please attach the missing image again.');
   const modelInfo = modelCatalog[provider].find(item => item.id === model) || modelDetails(provider, model);
-  if (!modelInfo.vision && attachments.length) throw new Error('This model accepts text only. Select a vision model for images.');
+  if (modelInfo.vision === false && attachments.length) throw new Error('This model accepts text only. Select a vision model for images.');
   const savedEffort = settings.reasoningEfforts[provider]?.[model] || 'auto';
   const reasoningEffort = modelInfo.reasoningEfforts.includes(savedEffort) ? savedEffort : 'auto';
   const request = { id: randomUUID(), question, images: attachments, provider, model, text: '', controller: new AbortController() };
@@ -454,7 +543,8 @@ async function ask(input) {
       emit({ type: 'done', id: request.id, text: answer.text, truncated: answer.truncated });
     } catch (error) {
       const message = request.controller.signal.aborted ? 'Answer stopped. You can retry when you are ready.' : error.message;
-      lastAttempt = { id: request.id, question, text: request.text, error: message, provider, model, imageNames: attachments.map(image => image.name) };
+      lastAttempt = { id: request.id, question, text: request.text, error: message, provider, model, imageNames: attachments.map(image => image.name),
+        ...(provider === 'chatgpt' ? { action: error.action || '', code: error.code || '', requestId: error.requestId || '' } : {}) };
       interruptedWork.start(request, history);
       emit({ type: 'error', ...lastAttempt }); log('request-failed');
     } finally {
@@ -471,6 +561,8 @@ async function saveSettings(input) {
   settingsBusy = true;
   try {
     const next = validateSettings(input, settings);
+    if (next.provider === 'chatgpt' && (input.removeKey === true || (typeof input.apiKey === 'string' && input.apiKey.trim()))) throw new Error('Use Continue with ChatGPT or Sign out to manage this connection. API keys use the separate OpenAI API key connection.');
+    if (input.models?.chatgpt && input.models.chatgpt !== 'chatgpt-auto' && !modelCatalog.chatgpt.some(item => item.id === input.models.chatgpt)) throw new Error('Choose a model available to this ChatGPT account.');
     for (const [provider, choices] of Object.entries(input.reasoningEfforts || {})) {
       for (const [model, effort] of Object.entries(choices)) {
         const info = modelCatalog[provider].find(item => item.id === model) || modelDetails(provider, model);
@@ -499,6 +591,9 @@ async function saveSettings(input) {
     next.bounds = settings.bounds;
     if (!('compact' in input)) next.compact = settings.compact;
     const hadCredentials = fs.existsSync(path.join(store.directory, 'credentials.enc'));
+    const profileId = chatgpt.publicState().activeProfileId;
+    const oldChatGPTPreferences = profileId ? chatgpt.getProfilePreferences() : null;
+    let chatgptPreferencesChanged = false;
     try {
       if (!next.rememberHistory) interruptedWork.clear();
       if (credentialsChanged) store.write('credentials.enc', nextKeys, true);
@@ -507,10 +602,15 @@ async function saveSettings(input) {
         const login = loginState();
         if (platform.mac && next.launchAtLogin && !login.openAtLogin && login.status !== 'requires-approval') throw new Error('macOS did not enable launch at sign-in. Add OpenCluely in System Settings → General → Login Items.');
       }
+      if (profileId && (input.models?.chatgpt || input.reasoningEfforts?.chatgpt)) {
+        chatgpt.setProfilePreferences({ model: next.models.chatgpt, reasoningEfforts: next.reasoningEfforts.chatgpt || {} }, profileId);
+        chatgptPreferencesChanged = true;
+      }
       store.write('preferences.json', next);
     } catch (error) {
       try {
         if (credentialsChanged) { if (hadCredentials) store.write('credentials.enc', keys, true); else store.remove('credentials.enc'); }
+        if (chatgptPreferencesChanged) chatgpt.setProfilePreferences(oldChatGPTPreferences, profileId);
         if (startupChanged) app.setLoginItemSettings(loginOptions(settings.launchAtLogin, process.execPath));
       } catch { warn('Settings could not be fully restored after a disk error. Reopen Settings and check your preferences.'); }
       throw error;
@@ -549,7 +649,7 @@ function requestKeyboardFocus(field = 'question') {
 function registerIPC() {
   handle('state', currentState); handle('ask', ask);
   handle('focus-field', requestKeyboardFocus);
-  handle('cancel', () => { active?.controller.abort(); return true; });
+  handle('cancel', () => { pendingAsk?.controller.abort(); active?.controller.abort(); return true; });
   handle('set-attachments', ids => {
     const question = validateQuestion({ text: 'attachments', imageIds: ids });
     if (question.imageIds.some(id => !images.has(id))) throw new Error('An attachment expired. Attach the image again.');
@@ -589,6 +689,11 @@ function registerIPC() {
   handle('release-image', id => { draftImageIds.delete(id); if (typeof id === 'string' && !history.some(message => imageIds(message).includes(id)) && !imageIds(active?.question).includes(id) && !imageIds(lastAttempt?.question).includes(id)) images.delete(id); return true; });
   handle('save-settings', saveSettings);
   handle('refresh-models', refreshModels);
+  handle('chatgpt-sign-in', options => changeChatGPTConnection(() => chatgpt.signIn(options || {})));
+  handle('chatgpt-cancel-sign-in', () => { chatgpt.cancelSignIn(); return currentState(); });
+  handle('chatgpt-select-profile', id => changeChatGPTConnection(() => chatgpt.selectProfile(id)));
+  handle('chatgpt-sign-out', id => changeChatGPTConnection(() => chatgpt.signOut(id), { signOut: true, stopAnswer: !id || id === chatgpt.publicState().activeProfileId }));
+  handle('chatgpt-manage-usage', async () => { await shell.openExternal('https://chatgpt.com/settings/usage'); return currentState(); });
   handle('screen-settings', openScreenSettings);
   handle('set-recovery-enabled', setRecoveryEnabled);
   handle('new-chat', () => changeConversation());
@@ -669,7 +774,9 @@ async function initialize() {
   if (canStartAtLogin() && typeof login.openAtLogin === 'boolean') settings.launchAtLogin = login.openAtLogin;
   if (!store.available()) { settings.rememberHistory = false; warn('Secure storage is unavailable. API keys and history cannot be saved.'); }
   const credentials = store.read('credentials.enc', {}, true);
-  for (const provider of PROVIDERS) if (typeof credentials?.[provider] === 'string' && credentials[provider].length <= 500) keys[provider] = credentials[provider];
+  for (const provider of PROVIDERS) if (provider !== 'chatgpt' && typeof credentials?.[provider] === 'string' && credentials[provider].length <= 500) keys[provider] = credentials[provider];
+  chatgpt = new ChatGPTAuth({ store, openExternal: url => shell.openExternal(url), onChange: chatGPTChanged });
+  loadChatGPTProfile(true);
   restoreModelCatalog();
   if (settings.rememberHistory) {
     try { history = validateHistory(store.read('conversation.enc', [], true)); }
@@ -713,10 +820,11 @@ async function initialize() {
   if (!testMode) void refreshModels();
   if (testMode) {
     await require(interruptionTestMode ? '../tests/interruption-electron' : quitTestMode ? '../tests/quit-electron' : '../tests/smoke-electron').run({ app, getWindow: () => win, store, currentState, ask, saveSettings, refreshModels, requestKeyboardFocus, importImage, capture, images, showOverlay, hideOverlay, togglePassThrough, toggleCompact, requestQuit, setRecoveryEnabled, changeConversation, cancelSessionEnd,
-      setModelLister: fn => { modelLister = fn; },
+      setModelLister: fn => { const previous = modelLister; modelLister = fn; return previous; },
+      setChatGPTController: controller => { const previous = chatgpt; chatgpt = controller; chatgptSessionEpoch++; loadChatGPTProfile(true); syncState(); return previous; },
       setQuitConfirmationFunction: fn => { quitConfirmationFunction = fn; },
       setRecoveryController: controller => { const previous = recovery; recovery = controller; syncState(); return previous; },
-      setAnswerFunction: fn => { answerFunction = fn; }, setKeyValidator: fn => { keyValidator = fn; }, setScreenPermissionFunction: fn => { screenPermissionFunction = fn; }, cancel: () => active?.controller.abort(), clear: () => { history = []; images.clear(); lastAttempt = null; persistHistory(); syncState(); },
+      setAnswerFunction: fn => { const previous = answerFunction; answerFunction = fn; return previous; }, setKeyValidator: fn => { keyValidator = fn; }, setScreenPermissionFunction: fn => { screenPermissionFunction = fn; }, cancel: () => { pendingAsk?.controller.abort(); active?.controller.abort(); }, clear: () => { history = []; images.clear(); lastAttempt = null; persistHistory(); syncState(); },
       getHistory: () => history, interruptedWork });
   }
 }
@@ -731,7 +839,8 @@ else {
     interruptedWork?.flush();
     // An accepted ordinary quit is intentional; only abnormal exits should reopen.
     recovery?.disarmForSessionEnd();
-    quitting = true; active?.controller.abort(); clearTimeout(geometryTimer);
+    quitting = true; pendingAsk?.controller.abort(); active?.controller.abort(); clearTimeout(geometryTimer);
+    chatgpt?.cancelSignIn();
     if (settings && store) {
       if (win && !win.isDestroyed()) { const bounds = win.getBounds(); settings.bounds = { ...bounds, height: settings.compact ? normalBounds?.height || 700 : bounds.height }; }
       try { persistSettings(); persistHistory(); } catch { log('shutdown-save-failed'); }

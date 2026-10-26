@@ -8,6 +8,47 @@ class ProviderError extends Error {
   constructor(message, retryable = false) { super(message); this.name = 'ProviderError'; this.retryable = retryable; }
 }
 
+// Only stable error codes and bounded diagnostic identifiers leave this layer;
+// provider messages and admission detail strings may echo request data.
+function chatgptError(status, value = {}, requestId = null) {
+  const raw = value?.error || value?.response?.error || value;
+  const code = typeof raw?.code === 'string' && /^[a-z0-9_]{1,100}$/i.test(raw.code) ? raw.code : null;
+  const known = {
+    subscription_sharing_user_not_eligible: ['ChatGPT plan usage is unavailable for this account or workspace. Choose another connection in Settings.', 'account'],
+    subscription_sharing_usage_limit_exceeded: ['This app reached a ChatGPT plan usage limit. Open Manage usage in Settings before trying again.', 'manage-usage'],
+    subscription_sharing_usage_unavailable: ['ChatGPT usage availability could not be checked. Your connection is saved; try again later.', 'retry-later'],
+    subscription_sharing_user_unavailable: ['The ChatGPT account or workspace is temporarily unavailable. Your connection is saved; try again later.', 'retry-later'],
+    subscription_sharing_unsupported_capability: ['This request uses a capability unavailable through the ChatGPT connection. Change the model or input in Settings.', 'settings'],
+    subscription_sharing_route_not_supported: ['This operation is unavailable through the ChatGPT connection. Check the app integration.', 'settings'],
+    subscription_sharing_invalid_user: ['The ChatGPT account could not be validated. Check the selected account and reconnect if it was disconnected.', 'reconnect'],
+    chatpass_v2_scope_not_authorized: ['This ChatGPT connection does not authorize this operation. Enable ChatGPT plan usage in Settings.', 'consent'],
+    chatpass_v2_invalid_authorization_context: ['This ChatGPT connection does not authorize this operation. Enable ChatGPT plan usage in Settings.', 'consent']
+  };
+  const fallback = status === 401 ? ['The ChatGPT connection was not accepted. Check the account and reconnect in Settings.', 'reconnect']
+    : status === 403 ? ['ChatGPT plan usage is restricted for this connection. Check account, workspace, and plan permission in Settings.', 'account']
+      : status === 429 ? ['A ChatGPT usage limit was reached. Open Manage usage in Settings before trying again.', 'manage-usage']
+        : status === 404 ? ['This model is unavailable for the selected ChatGPT account. Refresh its models in Settings.', 'settings']
+          : status >= 500 ? ['ChatGPT is temporarily unavailable. Your connection is saved; try again later.', 'retry-later']
+            : ['ChatGPT could not complete this request. Check the selected model and input, then retry when ready.', 'settings'];
+  const [message, action] = Object.hasOwn(known, code) ? known[code] : fallback;
+  const error = new ProviderError(message);
+  Object.assign(error, { status, code, action,
+    param: typeof raw?.param === 'string' && /^[\w.\[\]-]{1,100}$/.test(raw.param) ? raw.param : null,
+    requestId: typeof requestId === 'string' && /^[\w-]{1,200}$/.test(requestId) ? requestId : null,
+    bodyShape: value?.error || value?.response?.error ? 'error' : typeof value?.detail === 'string' ? 'detail' : 'other' });
+  return error;
+}
+
+async function responseError(provider, response) {
+  if (provider !== 'chatgpt') { await response.body?.cancel(); return httpError(response.status); }
+  let value = {};
+  try {
+    const text = await response.text();
+    if (text.length <= 65536) value = JSON.parse(text);
+  } catch { /* Keep the status even when an admission response is not JSON. */ }
+  return chatgptError(response.status, value, response.headers?.get('x-request-id'));
+}
+
 // Authenticate without generating an answer. Keys stay in headers, including on failure.
 async function validateApiKey(provider, apiKey, { fetchImpl = fetch, timeoutMs = 20000 } = {}) {
   const request = provider === 'anthropic' ? {
@@ -41,7 +82,7 @@ async function validateApiKey(provider, apiKey, { fetchImpl = fetch, timeoutMs =
 
 // Follow pagination on the provider's fixed origin. Never log provider bodies or keys.
 async function listProviderModels(provider, apiKey, { fetchImpl = fetch, timeoutMs = 20000 } = {}) {
-  const request = provider === 'openai' ? { url: 'https://api.openai.com/v1/models', headers: { Authorization: `Bearer ${apiKey}` } }
+  const request = provider === 'openai' || provider === 'chatgpt' ? { url: 'https://api.openai.com/v1/models', headers: { Authorization: `Bearer ${apiKey}` } }
     : provider === 'anthropic' ? { url: 'https://api.anthropic.com/v1/models?limit=1000', headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' } }
       : provider === 'gemini' ? { url: 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000', headers: { 'x-goog-api-key': apiKey } } : null;
   if (!request) throw new ProviderError('Unknown AI provider.');
@@ -51,8 +92,8 @@ async function listProviderModels(provider, apiKey, { fetchImpl = fetch, timeout
   try {
     for (let page = 0; page < 30; page++) {
       const response = await fetchImpl(url, { method: 'GET', headers: request.headers, signal: controller.signal, redirect: 'error' });
-      if (!response.ok) { await response.body?.cancel(); throw httpError(response.status); }
-      const data = await response.json(), batch = provider === 'gemini' ? data.models : data.data;
+      if (!response.ok) throw await responseError(provider, response);
+      const data = await response.json(), batch = provider === 'gemini' || provider === 'chatgpt' ? data.models : data.data;
       if (!Array.isArray(batch) || items.length + batch.length > 10000) throw new ProviderError('The provider returned an invalid model catalog.');
       items.push(...batch);
       const token = provider === 'gemini' ? data.nextPageToken : provider === 'anthropic' && data.has_more ? data.last_id : null;
@@ -75,17 +116,19 @@ async function listProviderModels(provider, apiKey, { fetchImpl = fetch, timeout
 }
 
 function buildRequest(provider, model, apiKey, messages, { reasoningEffort = 'auto', modelInfo = modelDetails(provider, model) } = {}) {
+  if (provider === 'chatgpt' && model === 'chatgpt-auto') throw new ProviderError('Connect a ChatGPT account and choose one of its available models in Settings.');
   const attached = message => message.role === 'user' ? (message.images || (message.image ? [message.image] : [])) : [];
-  if (modelInfo.vision === false && messages.some(message => attached(message).length)) throw new ProviderError('This model accepts text only. Select a vision model to ask about images.');
+  if (modelInfo.vision === false && messages.some(message => attached(message).length)) throw new ProviderError(provider === 'chatgpt' ? 'This ChatGPT model does not support image input. Choose another model or ask a text question.' : 'This model accepts text only. Select a vision model to ask about images.');
   if (reasoningEffort !== 'auto' && !modelInfo.reasoningEfforts.includes(reasoningEffort)) throw new ProviderError('This model does not support the selected reasoning effort. Choose another level.');
   const explicit = reasoningEffort !== 'auto';
   const budget = { low: 1024, medium: 4096, high: 8192 }[reasoningEffort];
-  if (provider === 'openai') {
+  if (provider === 'openai' || provider === 'chatgpt') {
     return {
       url: 'https://api.openai.com/v1/responses',
       headers: { 'content-type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: {
-        model, instructions: SYSTEM, stream: true, store: false, max_output_tokens: explicit ? 16384 : 8192,
+        model, instructions: SYSTEM, stream: true, store: false,
+        ...(provider === 'openai' ? { max_output_tokens: explicit ? 16384 : 8192 } : {}),
         ...(explicit ? { reasoning: { effort: reasoningEffort } } : {}),
         input: messages.map(message => ({ role: message.role, content: [
           ...attached(message).map(image => ({ type: 'input_image', image_url: `data:${image.mime};base64,${image.data}` })),
@@ -168,10 +211,7 @@ async function streamAnswer({ provider, model, apiKey, messages, reasoningEffort
       combined.throwIfAborted();
       try {
         const response = await fetchImpl(request.url, { method: 'POST', headers: request.headers, body: JSON.stringify(request.body), signal: combined, redirect: 'error' });
-        if (!response.ok) {
-          await response.body?.cancel();
-          throw httpError(response.status);
-        }
+        if (!response.ok) throw await responseError(provider, response);
         let completed = false;
         for await (const event of parseSSE(response.body)) {
           combined.throwIfAborted();
@@ -181,12 +221,13 @@ async function streamAnswer({ provider, model, apiKey, messages, reasoningEffort
             if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') delta = event.delta.text || '';
             if (event.type === 'message_delta') stopReason = event.delta?.stop_reason || stopReason;
             if (event.type === 'message_stop') completed = true;
-          } else if (provider === 'openai') {
-            if (event.type === 'error' || event.type === 'response.failed') throw new ProviderError('OpenAI interrupted the answer. Check the model and account access, then retry.');
+          } else if (provider === 'openai' || provider === 'chatgpt') {
+            if (event.type === 'error' || event.type === 'response.failed') throw provider === 'chatgpt' ? chatgptError(0, event, response.headers?.get('x-request-id')) : new ProviderError('OpenAI interrupted the answer. Check the model and account access, then retry.');
             if (event.type === 'response.output_text.delta') delta = typeof event.delta === 'string' ? event.delta : '';
             if (event.type === 'response.refusal.delta') throw new ProviderError('The provider declined this question. Try rephrasing it.');
             if (event.type === 'response.completed') { completed = true; stopReason = 'completed'; }
             if (event.type === 'response.incomplete') {
+              if (provider === 'chatgpt') throw new ProviderError('ChatGPT stopped before completing this answer. Review the partial text and retry only when ready.');
               const reason = event.response?.incomplete_details?.reason;
               if (reason !== 'max_output_tokens') throw new ProviderError('OpenAI could not complete this answer. Try rephrasing the question.');
               completed = true; stopReason = 'max_tokens';
@@ -212,7 +253,7 @@ async function streamAnswer({ provider, model, apiKey, messages, reasoningEffort
       } catch (error) {
         if (combined.aborted) throw error;
         const retryable = error instanceof ProviderError ? error.retryable : error instanceof TypeError;
-        if (output || !retryable || attempt === 2) {
+        if (provider === 'chatgpt' || output || !retryable || attempt === 2) {
           if (error instanceof ProviderError) throw error;
           throw new ProviderError('Could not connect to the AI provider. Check your internet connection and try again.');
         }

@@ -1,4 +1,6 @@
-# Windows browser-focus behavior in 2.3.8
+# Windows browser-focus behavior
+
+In 2.4.1, dropdowns use in-window listboxes instead of native Windows select popups. Provider, model, reasoning, display, account and saved-chat selections can therefore open and choose an option without activating the overlay. Keyboard interaction remains available after explicitly focusing the overlay. State refreshes preserve an open menu when its choices have not changed.
 
 Adapted from Mac reference 5fd5ab805d465f04586831d67b782853566a8859 on 24 October 2026.
 

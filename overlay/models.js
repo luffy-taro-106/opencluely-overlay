@@ -2,6 +2,9 @@
 
 // Offline starting points only. Configured accounts replace these with live catalogs.
 const PRESETS = {
+  // ChatGPT connections discover their own account catalog. No bundled model
+  // name is evidence that a subscription has access to it.
+  chatgpt: [],
   openai: [
     { id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol · balanced' },
     { id: 'gpt-6-astra', name: 'GPT-6 Astra · advanced reasoning' },
@@ -26,8 +29,8 @@ const PRESETS = {
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash · legacy access' }
   ]
 };
-const PROVIDERS = Object.freeze(['anthropic', 'gemini', 'openai']);
-const PROVIDER_NAMES = Object.freeze({ anthropic: 'Claude', gemini: 'Gemini', openai: 'OpenAI / ChatGPT' });
+const PROVIDERS = Object.freeze(['anthropic', 'gemini', 'openai', 'chatgpt']);
+const PROVIDER_NAMES = Object.freeze({ anthropic: 'Claude', gemini: 'Gemini', openai: 'OpenAI API key', chatgpt: 'ChatGPT account' });
 const EFFORTS = Object.freeze(['auto', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 const BASIC = ['low', 'medium', 'high'];
 const EXTENDED = [...BASIC, 'xhigh', 'max'];
@@ -37,7 +40,17 @@ const validModelId = id => typeof id === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]
 // override these fallbacks. Unknown models stay on provider defaults.
 function modelDetails(provider, id, metadata = {}) {
   let reasoningEfforts = [], reasoningMode = null, thinking = null, vision = true;
-  if (provider === 'openai') {
+  if (provider === 'chatgpt') {
+    // SIWC catalogs are an account-specific contract. Use explicit capability
+    // metadata rather than inferring subscription capabilities from a slug.
+    const modalities = metadata.input_modalities || metadata.modalities?.input;
+    vision = Array.isArray(modalities) ? modalities.includes('image')
+      : typeof metadata.capabilities?.image_input?.supported === 'boolean' ? metadata.capabilities.image_input.supported
+        : typeof metadata.supports_images === 'boolean' ? metadata.supports_images : null;
+    const efforts = metadata.supported_reasoning_efforts || metadata.supported_reasoning_levels || metadata.reasoning_efforts;
+    if (Array.isArray(efforts)) reasoningEfforts = [...new Set(efforts.map(value => typeof value === 'string' ? value : value?.effort).filter(value => EFFORTS.includes(value) && value !== 'auto'))];
+    if (reasoningEfforts.length) reasoningMode = 'effort';
+  } else if (provider === 'openai') {
     if (/^gpt-6(?:\.1)?-(?:astra|sol|luna)(?:-|$)/.test(id) || /^gpt-5\.6-(?:sol|terra|luna)(?:-|$)/.test(id)) {
       reasoningEfforts = /^(?:gpt-6-(?:sol|luna)|gpt-5\.6-)/.test(id) ? ['none', ...EXTENDED] : EXTENDED;
     } else if (/^gpt-5(?:\.\d+)?-chat|^chat-latest$/.test(id)) {
@@ -81,8 +94,9 @@ function normalizeModels(provider, items, now = new Date()) {
   if (!PROVIDERS.includes(provider) || !Array.isArray(items)) throw new Error('Invalid model catalog.');
   const seen = new Set(), models = [];
   for (const item of items) {
-    const id = provider === 'gemini' ? item?.name?.replace(/^models\//, '') : item?.id;
+    const id = provider === 'gemini' ? item?.name?.replace(/^models\//, '') : provider === 'chatgpt' ? item?.slug : item?.id;
     if (!validModelId(id) || seen.has(id)) continue;
+    if (provider === 'chatgpt' && item.visibility !== 'list') continue;
     if (item.shutdown_date && item.shutdown_date <= now.toISOString().slice(0, 10)) continue;
     if (item.lifecycle === 'retired' || (item.retires_at && Date.parse(item.retires_at) <= now.getTime())) continue;
     if (provider === 'openai' && (!/^(?:gpt-[456](?:[.o-]|$)|o[134](?:-|$)|chat-latest$)/.test(id) || /audio|realtime|transcribe|tts|image|search|deep-research/.test(id))) continue;
@@ -90,9 +104,10 @@ function normalizeModels(provider, items, now = new Date()) {
     if (provider === 'gemini' && (!item.supportedGenerationMethods?.includes('generateContent') || !/^(?:gemini-|gemma-)/.test(id) || /image|nano-banana|tts|transcribe|audio|live|computer-use|robotics/.test(id))) continue;
     const model = modelDetails(provider, id, item);
     if (item.shutdown_date) model.name += ` · retires ${item.shutdown_date}`;
-    if (!model.vision) model.name += ' · text only';
+    if (!model.vision && provider !== 'chatgpt') model.name += ' · text only';
     models.push(model); seen.add(id);
   }
+  if (provider === 'chatgpt') return models;
   const preferred = PRESETS[provider].map(model => model.id);
   return models.sort((a, b) => {
     const ai = preferred.indexOf(a.id), bi = preferred.indexOf(b.id);

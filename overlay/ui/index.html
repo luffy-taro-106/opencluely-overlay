@@ -6,6 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none';">
   <title>Chat</title>
   <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="selects.css">
 </head>
 <body>
 <div id="appBackdrop" aria-hidden="true"></div>
@@ -28,7 +29,7 @@
     </div>
   </header>
   <div class="toolbar">
-    <label class="provider-pill"><span class="provider-dot"></span><select id="provider" aria-label="AI provider"><option value="anthropic">Claude</option><option value="gemini">Gemini</option><option value="openai">OpenAI</option></select></label>
+    <label class="provider-pill"><span class="provider-dot"></span><select id="provider" aria-label="AI provider"><option value="anthropic">Claude</option><option value="gemini">Gemini</option><option value="openai">OpenAI API key</option><option value="chatgpt">ChatGPT account</option></select></label>
     <div class="tools">
       <button class="icon-button" id="uploadButton" title="Attach up to 10 PNG or JPEG images" aria-label="Attach images"><svg><use href="#image"/></svg></button>
       <button class="icon-button" id="captureButton" title="Capture selected display · Ctrl+Alt+S" aria-label="Capture a screenshot"><svg><use href="#capture"/></svg></button>
@@ -38,10 +39,11 @@
     </div>
   </div>
   <div class="model-strip"><select id="quickModel" aria-label="Model for the selected provider"></select><select id="quickEffort" aria-label="Reasoning effort" title="Reasoning effort"></select><button id="newChatButton" type="button" class="new-chat-button">＋ New chat</button></div>
+  <div class="account-strip" id="chatgptAccountStrip" hidden><button type="button" class="text-button" id="chatgptAccountButton" title="ChatGPT account settings"><span id="chatgptUsageLabel"></span></button><button type="button" class="text-button" id="chatgptQuickUsage">Manage usage</button></div>
   <div class="mode-banner" id="passBanner" hidden>Clicks pass to the app underneath <kbd data-shortcut="Click-through">Ctrl+Alt+I</kbd> to interact</div>
   <section class="content" id="content" aria-label="Conversation">
     <div class="welcome" id="welcome">
-      <div class="setup-note" id="setupNote"><span class="status-dot amber"></span><span>Add your API key in <button id="setupButton">Settings</button> to get started.</span></div>
+      <div class="setup-note" id="setupNote"><span class="status-dot amber"></span><span><span id="setupLead">Add your API key in </span><button id="setupButton">Settings</button><span id="setupTail"> to get started.</span></span></div>
     </div>
     <div class="messages" id="messages" aria-live="polite" aria-relevant="additions"></div>
     <button class="jump-button" id="jumpButton" hidden>↓ Latest answer</button>
@@ -60,13 +62,22 @@
 <dialog id="settingsDialog" class="settings-dialog">
   <div class="dialog-heading"><h2>Settings</h2><button class="icon-button" id="closeSettings" aria-label="Close settings"><svg><use href="#close"/></svg></button></div>
   <form id="settingsForm">
-    <label>AI provider<select id="settingsProvider"><option value="anthropic">Anthropic Claude</option><option value="gemini">Google Gemini</option><option value="openai">OpenAI / ChatGPT</option></select></label>
-    <label>Model<select id="modelPreset"></select><small>Available chat models from your API account. Text-only models are marked.</small></label>
+    <label>AI provider<select id="settingsProvider"><option value="anthropic">Anthropic Claude</option><option value="gemini">Google Gemini</option><option value="openai">OpenAI API key</option><option value="chatgpt">ChatGPT account</option></select></label>
+    <section class="chatgpt-connection" id="chatgptConnection" aria-label="ChatGPT account" hidden>
+      <label id="chatgptProfileLabel">Saved ChatGPT connection<select id="chatgptProfile" aria-label="Saved ChatGPT connection"></select></label>
+      <p id="chatgptConnectionStatus" class="connection-status" role="status" aria-live="polite"></p>
+      <button type="button" class="chatgpt-signin-button" id="chatgptSignInButton">Continue with ChatGPT</button>
+      <div class="account-actions"><button type="button" class="text-button" id="chatgptAddAccount">Add account or workspace</button><button type="button" class="text-button" id="chatgptEnableUsage" hidden>Enable ChatGPT plan usage</button><button type="button" class="text-button" id="chatgptCancelSignIn" hidden>Cancel sign-in</button></div>
+      <div class="account-actions"><button type="button" class="text-button" id="chatgptManageUsage">Manage usage</button><button type="button" class="text-button danger" id="chatgptSignOut" hidden>Sign out…</button></div>
+      <p class="connection-hint">Sign in and approve ChatGPT plan usage in your browser. Account and workspace eligibility applies. Credentials stay encrypted on this device.</p>
+      <p class="connection-error" id="chatgptConnectionError" role="alert" hidden></p>
+    </section>
+    <label>Model<select id="modelPreset"></select><small id="modelHint">Available chat models from your API account. Text-only models are marked.</small></label>
     <div class="catalog-controls"><small id="modelStatus" role="status"></small><button type="button" id="refreshModels" class="text-button">Refresh models / check key</button></div>
     <label id="customModelLabel" hidden>Custom model ID<input id="model" maxlength="100" spellcheck="false" autocomplete="off"><small>Enter an API model ID with text and image support.</small></label>
     <label>Reasoning effort<select id="reasoningEffort" aria-describedby="reasoningHint"></select><small id="reasoningHint">Higher effort can take longer and cost more. Saved separately for each model.</small></label>
     <p id="openaiNote" class="privacy-note" hidden>Uses an OpenAI API key and separate API billing. A ChatGPT subscription alone does not provide an API key.</p>
-    <label>API key <span id="keyBadge" class="key-badge"></span><input id="apiKey" type="password" maxlength="500" autocomplete="off" spellcheck="false" placeholder="Paste your key"><small id="keyNote">Saved encrypted on this device, including after restart. A new key is verified before replacing your saved key. Leave blank to keep it.</small></label>
+    <label id="apiKeyLabel">API key <span id="keyBadge" class="key-badge"></span><input id="apiKey" type="password" maxlength="500" autocomplete="off" spellcheck="false" placeholder="Paste your key"><small id="keyNote">Saved encrypted on this device, including after restart. A new key is verified before replacing your saved key. Leave blank to keep it.</small></label>
     <button type="button" id="removeKey" class="text-button danger" hidden>Remove saved key</button>
     <label class="range-label">App opacity <output id="opacityValue">98%</output><input id="opacity" type="range" min="10" max="100" value="98" aria-label="App opacity" aria-describedby="opacityHint"><small id="opacityHint">Fades the interface and conversation text. Code boxes use their own setting.</small></label>
     <label class="range-label">Code box opacity <output id="codeOpacityValue">100%</output><input id="codeOpacity" type="range" min="10" max="100" value="100" aria-label="Code box opacity" aria-describedby="codeOpacityHint"><small id="codeOpacityHint">Controls code boxes, including their text and Copy button, independently of app opacity.</small></label>
@@ -96,8 +107,10 @@
 </dialog>
 <dialog id="clearDialog" class="confirm-dialog"><h2>Clear this conversation?</h2><p>This removes the conversation saved on this device and releases attached images.</p><div><button id="cancelClear" class="secondary-button">Keep conversation</button><button id="confirmClear" class="primary-button">Clear</button></div></dialog>
 <dialog id="deleteChatDialog" class="confirm-dialog"><h2>Delete this saved chat?</h2><p id="deleteChatTitle"></p><div><button id="cancelDeleteChat" class="secondary-button">Keep chat</button><button id="confirmDeleteChat" class="primary-button">Delete chat</button></div></dialog>
+<dialog id="chatgptSignOutDialog" class="confirm-dialog"><h2>Sign out of ChatGPT?</h2><p id="chatgptSignOutLabel"></p><p>The saved credentials for this connection will be removed from this device. Other connections and API keys stay available.</p><div><button id="cancelChatGPTSignOut" class="secondary-button">Stay connected</button><button id="confirmChatGPTSignOut" class="primary-button">Sign out</button></div></dialog>
 <script src="../../node_modules/marked/lib/marked.umd.js"></script>
 <script src="../../node_modules/dompurify/dist/purify.min.js"></script>
+<script src="selects.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

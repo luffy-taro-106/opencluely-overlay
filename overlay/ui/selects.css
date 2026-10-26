@@ -1,0 +1,14 @@
+select.overlay-select-native{position:absolute!important;width:1px!important;height:1px!important;opacity:0!important;pointer-events:none!important;margin:0!important;padding:0!important;border:0!important;clip-path:inset(50%)}
+.overlay-select-trigger{position:relative;display:block;min-width:0;max-width:100%;background:var(--panel);color:var(--text);border:1px solid var(--line);padding:9px 25px 9px 9px;border-radius:7px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:inherit;-webkit-app-region:no-drag}
+.overlay-select-trigger::after{content:'⌄';position:absolute;right:9px;top:50%;transform:translateY(-60%);pointer-events:none;color:var(--muted)}
+.overlay-select-trigger:hover:not(:disabled),.overlay-select-trigger[aria-expanded=true]{border-color:#718b6c;background:#213027}
+.provider-pill .overlay-select-trigger{max-width:148px;font-size:12px;padding:7px 20px 7px 2px;border:0;background:transparent}
+.provider-pill .overlay-select-trigger::after{right:2px}
+.model-strip .overlay-select-trigger{flex:1;font-size:10px;padding:7px 23px 7px 7px}
+.model-strip [data-select-id=quickEffort]{flex:0 0 105px}
+.settings-dialog label>.overlay-select-trigger,.chat-archive>.overlay-select-trigger{display:block;width:100%;margin-top:7px;background:#111a14;border:1px solid #364831;border-radius:7px;color:var(--text);padding:9px 25px 9px 10px;font-size:11px}
+.overlay-select-list{position:fixed;inset:auto;margin:0;padding:4px;background:#16251c;color:var(--text);border:1px solid #718b6c;border-radius:8px;box-shadow:0 8px 28px #0009;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#53644c transparent;z-index:1000}
+.overlay-select-list::backdrop{background:transparent;pointer-events:none}
+.overlay-select-option{display:block;width:100%;border:0;border-radius:4px;background:transparent;color:var(--text);padding:8px 10px;text-align:left;font-size:11px;line-height:1.4;white-space:normal;overflow-wrap:anywhere;-webkit-app-region:no-drag}
+.overlay-select-option[aria-selected=true]{color:var(--accent);font-weight:600}
+.overlay-select-option.active:not(:disabled),.overlay-select-option:hover:not(:disabled){background:#314933}
