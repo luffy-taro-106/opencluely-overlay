@@ -1,6 +1,6 @@
-# OpenCluely Overlay 2.5.3 for Windows
+# OpenCluely Overlay 2.5.0 for Windows
 
-Version 2.5.3 adds opt-in diagnostics for OpenCluely's own calls, processes, window, checkpoints and component files, with a redacted local JSON export. It also saves pending state on lock notifications. The existing Windows watchdog, Quit controls, provider accounts and text/image features are preserved. See [diagnostic scope and controls](docs/DIAGNOSTICS.md), [2.5.3 validation](docs/VERIFICATION-2.5.3.md), [recovery architecture](docs/RECOVERY-ARCHITECTURE.md), and [account setup](docs/CHATGPT-SIGN-IN.md). The source produces `dist/OpenCluely-Overlay-Setup-2.5.3.exe`; older download links below refer to earlier releases.
+Version 2.5.0 incorporates upstream login commit `723ad56` and adds separate **ChatGPT account**, **Codex account**, and **OpenAI API key** connections. See [account setup and limits](docs/CHATGPT-SIGN-IN.md) and [validation results](docs/VERIFICATION-2.5.0.md). The locally built installer is `dist/OpenCluely-Overlay-Setup-2.5.0.exe`; older download links below refer to earlier releases.
 
 Windows desktop assistant for text and image questions using **ChatGPT, Codex, OpenAI API, Claude, or Gemini**, adapted from the updated [Mac version](https://github.com/luffy-taro-106/mac-godsplan).
 
@@ -16,16 +16,16 @@ Windows desktop assistant for text and image questions using **ChatGPT, Codex, O
 - Separate provider keys, checked before saving with Windows encryption.
 - New chat and encrypted conversation archives that can be reopened or deleted.
 - Capture exclusion and protection against normal Quit requests, enabled by default.
-- An owner-controlled Windows helper that reopens the installed app after ordinary Quit, a crash or forced termination while recovery is enabled.
+- An owner-controlled Windows helper that reopens the installed app after an unexpected exit.
 - Optional launch after Windows sign-in, separate from automatic reopening.
 
 Download the [Windows 2.3.8 installer](https://github.com/luffy-taro-106/opencluely-overlay/releases/download/v2.3.8/OpenCluely-Overlay-Setup-2.3.8.exe) or the [complete Codex setup bundle](https://github.com/luffy-taro-106/opencluely-overlay/releases/download/v2.3.8/OpenCluely-Windows-2.3.8-Codex-Setup.zip), including the installer, source, setup guides, and SHA-256 verification manifest.
 
-Build the Windows installer as `dist/OpenCluely-Overlay-Setup-2.5.1.exe`. These are unsigned development builds. See the [Windows port status](docs/WINDOWS-PORT.md) for the original reference revision and [2.5.0 verification](docs/VERIFICATION-2.5.0.md) for the preceding release's results.
+Build the Windows installer as `dist/OpenCluely-Overlay-Setup-2.5.0.exe`. These are unsigned development builds. See the [Windows port status](docs/WINDOWS-PORT.md) for the original reference revision and [2.5.0 verification](docs/VERIFICATION-2.5.0.md) for current results.
 
 See [setup, controls, privacy and development](README-OVERLAY.md), [automatic reopening and emergency stop](docs/AUTOMATIC-REOPENING.md), and [startup and shortcuts](docs/STARTUP.md).
 
-**Ctrl+Alt+Space** shows or hides the running overlay. Closing the window hides it to the tray. With automatic reopening enabled, confirming **Quit and reopen** exits the current instance and the helper reopens it hidden in the tray; use the shortcut to show it again. Confirm **Quit completely** in Settings or the tray to stop both the overlay and helper. Pausing reopening is respected, and Windows shutdown and sign-out remain available. Stopping the helper can prevent recovery.
+**Ctrl+Alt+Space** shows or hides the running overlay. Closing the window hides it to the tray. Confirm **Quit OpenCluely** in Settings or the tray to stop both the overlay and automatic reopening. Windows shutdown and sign-out remain available. Windows can force terminate the app or helper; recovery does not make it immune to termination.
 
 For source development, use Node.js 22.12 or newer:
 

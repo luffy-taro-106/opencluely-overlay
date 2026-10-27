@@ -12,8 +12,6 @@ const { Store } = require('./storage');
 const { ChatGPTAuth } = require('./chatgpt-auth');
 const { CodexConnection } = require('./codex');
 const { InterruptedWork } = require('./interrupted-work');
-const { CheckpointWriter } = require('./checkpoint-writer');
-const { Diagnostics, ownProcessMetrics, checkpointStatus, inspectOwnFile } = require('./diagnostics');
 const { QuitGuard } = require('./quit-guard');
 const { WindowsRecovery, recoverySession } = require('./recovery');
 const { MODEL_CATALOG, PROVIDERS, PROVIDER_NAMES, EFFORTS, validModelId, modelDetails } = require('./models');
@@ -21,7 +19,7 @@ const { platformInfo, shortcutLabel, loginOptions, startHidden, startupAvailable
 const platform = platformInfo();
 const { WindowsPanel } = require('./windows-panel');
 
-const quitTestMode = !app.isPackaged && ['--quit-smoke-test', '--quit-reopen-smoke-test', '--quit-external-smoke-test', '--quit-session-end-smoke-test'].some(flag => process.argv.includes(flag));
+const quitTestMode = !app.isPackaged && process.argv.includes('--quit-smoke-test');
 const interruptionTestMode = !app.isPackaged && process.argv.includes('--interruption-smoke-test');
 const testMode = !app.isPackaged && (process.argv.includes('--smoke-test') || quitTestMode || interruptionTestMode);
 if (interruptionTestMode) {
@@ -35,7 +33,7 @@ app.setName('OpenCluely Overlay');
 if (process.platform === 'win32') app.setAppUserModelId('com.opencluely.overlay');
 
 let win, tray, store, quitting = false, settings, keys = {}, history = [], active = null, lastAttempt = null;
-let passThrough = false, captureBusy = false, settingsBusy = false, geometryCheckpoint, normalBounds;
+let passThrough = false, captureBusy = false, settingsBusy = false, geometryTimer, normalBounds;
 let panel = null;
 let screenshotRestore = true;
 let launchHidden = false;
@@ -43,10 +41,7 @@ let recovery, interruptedWork, initializationComplete = false;
 let chatgpt, loadedChatGPTProfile = null, chatgptSessionEpoch = 0, pendingAsk = null;
 let codex, codexEpoch = 0;
 let recoveryBeforeSessionEnd = false;
-let reopenAfterQuit = false;
 let archivedChats = [];
-const diagnostics = new Diagnostics();
-let diagnosticsExportBusy = false;
 const images = new Map(), warnings = [], recoveryTimes = [], shortcuts = [];
 const draftImageIds = new Set();
 const html = path.join(__dirname, 'ui', 'index.html');
@@ -56,35 +51,28 @@ let keyValidator = validateApiKey;
 let modelLister = listProviderModels;
 const modelCatalog = structuredClone(MODEL_CATALOG), modelStatus = {}, modelRefreshes = new Map();
 let screenPermissionFunction = () => platform.mac ? systemPreferences.getMediaAccessStatus('screen') : 'granted';
-let quitConfirmationFunction = async ({ stopCompletely = false } = {}) => {
+let quitConfirmationFunction = async () => {
   showOverlay(true);
-  const reopen = !stopCompletely && recovery?.available && recovery.enabled;
   const result = await dialog.showMessageBox(win, {
-    type: 'question', title: reopen ? 'Quit and reopen OpenCluely?' : 'Quit OpenCluely completely?',
-    message: reopen ? 'Quit this instance and reopen automatically?' : active ? 'Quit completely and stop the current answer?' : 'Quit OpenCluely completely?',
-    detail: reopen ? 'The background helper will reopen the overlay in the tray. Saved chats return; an unfinished answer is restored for review and manual retry. Use Quit completely to stop the app and helper.'
-      : 'The overlay, its shortcut, and automatic reopening will stop until you open the app again.',
-    buttons: ['Keep running', reopen ? 'Quit and reopen' : 'Quit completely'], defaultId: 0, cancelId: 0, noLink: true
+    type: 'question', title: 'Quit OpenCluely?',
+    message: active ? 'Quit and stop the current answer?' : 'Quit OpenCluely?',
+    detail: 'The overlay, its shortcut, and automatic reopening will stop until you open the app again.',
+    buttons: ['Keep running', 'Quit OpenCluely'], defaultId: 0, cancelId: 0, noLink: true
   });
   return result.response === 1;
 };
 const quitGuard = new QuitGuard({
   enabled: () => settings?.protectFromQuit === true,
-  confirm: options => quitConfirmationFunction(options),
-  prepare: async ({ stopCompletely }) => {
-    reopenAfterQuit = false;
-    if (!stopCompletely && !quitGuard.sessionEnding) reopenAfterQuit = await recovery?.keepForQuit() || false;
-    if (!reopenAfterQuit) await recovery?.stopForQuit();
-  },
-  quit: () => app.quit(),
+  confirm: () => quitConfirmationFunction(),
+  quit: async () => { await recovery?.stopForQuit(); app.quit(); },
   blocked: () => {
     log('external-quit-blocked');
-    emit({ type: 'notice', text: 'A normal Quit request was blocked. Use the Quit controls in Settings or the tray.' });
+    emit({ type: 'notice', text: 'A normal Quit request was blocked. Use Quit OpenCluely in Settings or the tray to exit.' });
   }
 });
-function requestQuit(stopCompletely = false) {
-  return quitGuard.requestQuit({ stopCompletely: stopCompletely === true }).catch(error => {
-    emit({ type: 'notice', text: error.code === 'quit_action_busy' ? error.message : 'OpenCluely could not finish quitting. Check automatic reopening in Settings and try Quit again.' });
+function requestQuit() {
+  return quitGuard.requestQuit().catch(() => {
+    emit({ type: 'notice', text: 'OpenCluely could not finish quitting. Check automatic reopening in Settings and try Quit again.' });
     return false;
   });
 }
@@ -130,7 +118,6 @@ function currentState() {
     screenPermission: screenPermission(),
     startupAvailable: canStartAtLogin(), startupStatus: loginState().status || '',
     recovery: recovery?.status() || { available: false, enabled: false, busy: false, error: '' },
-    diagnostics: diagnostics.status(),
     displays: screen.getAllDisplays().map((display, i) => ({ id: String(display.id), name: display.label || `Display ${i + 1}`, primary: display.id === screen.getPrimaryDisplay().id }))
   };
 }
@@ -320,15 +307,12 @@ function manualReopen() {
   }
 }
 function allowSessionEnd(terminal = true) {
-  diagnostics.lifecycle('session-end');
-  flushWindowState();
   interruptedWork?.flush();
   if (!quitGuard.sessionEnding) recoveryBeforeSessionEnd = !!recovery?.enabled || recovery?.shouldResumeAfterSessionEnd?.() === true;
   quitGuard.allowSessionEnd(); recovery?.disarmForSessionEnd({ terminal });
 }
 function cancelSessionEnd() {
   if (!quitGuard.sessionEnding) return;
-  diagnostics.lifecycle('session-end-cancelled');
   quitGuard.cancelSessionEnd();
   const restoreRecovery = recoveryBeforeSessionEnd; recoveryBeforeSessionEnd = false;
   if (restoreRecovery && recovery?.available && !quitting) {
@@ -409,15 +393,16 @@ function togglePassThrough() {
   if (!passThrough) showOverlay(false);
   return passThrough;
 }
-function persistGeometry() {
-  if (!win || win.isDestroyed() || quitting) return false;
-  const bounds = win.getBounds();
-  settings.bounds = settings.compact ? { ...bounds, height: normalBounds?.height || 700 } : bounds;
-  if (!settings.compact) normalBounds = bounds;
-  persistSettings();
+function saveGeometry() {
+  clearTimeout(geometryTimer);
+  geometryTimer = setTimeout(() => {
+    if (!win || win.isDestroyed() || quitting) return;
+    const bounds = win.getBounds();
+    settings.bounds = settings.compact ? { ...bounds, height: normalBounds?.height || 700 } : bounds;
+    if (!settings.compact) normalBounds = bounds;
+    try { persistSettings(); } catch { warn('Window position could not be saved.'); }
+  }, 350);
 }
-function saveGeometry() { if (!quitting) geometryCheckpoint?.mark(); }
-function flushWindowState() { geometryCheckpoint?.mark(); return geometryCheckpoint?.flush(); }
 function toggleCompact() {
   if (!win || win.isDestroyed()) return false;
   if (!settings.compact) normalBounds = win.getBounds();
@@ -433,7 +418,6 @@ function recoverRenderer(reason) {
   // Provider requests and their checkpoints live in main. A renderer crash
   // should not interrupt a healthy request; the reloaded UI receives its state.
   const now = Date.now();
-  diagnostics.lifecycle('renderer-recovery');
   recoveryTimes.push(now);
   while (recoveryTimes[0] < now - 60000) recoveryTimes.shift();
   log(`renderer-recovery:${reason}`);
@@ -503,8 +487,7 @@ function updateTray() {
     ...(recovery?.available ? [{ label: 'Reopen automatically', type: 'checkbox', checked: recovery.enabled, enabled: !recovery.busy,
       click: item => { void setRecoveryEnabled(item.checked).catch(error => emit({ type: 'notice', text: error.message })); } }] : []),
     { type: 'separator' },
-    { label: recovery?.available && recovery.enabled ? 'Quit and reopen OpenCluely' : 'Quit OpenCluely', enabled: !recovery?.busy, click: () => requestQuit() },
-    ...(recovery?.available ? [{ label: 'Quit completely…', enabled: !recovery.busy, click: () => requestQuit(true) }] : [])
+    { label: 'Quit OpenCluely', click: requestQuit }
   ]));
 }
 
@@ -705,59 +688,9 @@ async function saveSettings(input) {
 function handle(channel, action) {
   ipcMain.handle(`overlay:${channel}`, async (event, ...args) => {
     if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || event.senderFrame.url !== pageURL) return { ok: false, error: 'Unauthorized app request.' };
-    try { return { ok: true, value: await diagnostics.run(channel, () => action(...args)) }; }
+    try { return { ok: true, value: await action(...args) }; }
     catch (error) { return { ok: false, error: error.message || 'This action could not be completed.' }; }
   });
-}
-async function diagnosticReport() {
-  const metadata = require('../package.json');
-  const recoveryState = recovery?.status() || {};
-  const bounds = win && !win.isDestroyed() ? win.getBounds() : null;
-  const knownFiles = ['package.json', 'overlay/main.js', 'overlay/preload.js', 'overlay/diagnostics.js',
-    'overlay/checkpoint-writer.js', 'overlay/storage.js', 'overlay/recovery.js'];
-  const files = await Promise.all(knownFiles.map(name => inspectOwnFile(name, path.join(__dirname, '..', ...name.split('/')))));
-  if (process.platform === 'win32') files.push(await inspectOwnFile('recovery-helper.exe', recovery.helperPath, { pe: true }));
-  let processes = [], processInspection = 'available';
-  try { processes = ownProcessMetrics(app.getAppMetrics()); } catch { processInspection = 'unavailable'; }
-  return {
-    schemaVersion: 1, scope: 'OpenCluely-only', createdAt: new Date().toISOString(),
-    instrumentation: diagnostics.snapshot(),
-    runtime: { app: app.getVersion(), platform: process.platform, arch: process.arch, windowsOrKernelRelease: os.release(),
-      node: process.versions.node, electron: process.versions.electron, chromium: process.versions.chrome },
-    resources: { uptimeSeconds: process.uptime(), mainProcessMemoryBytes: process.memoryUsage(),
-      systemFreeMemoryBytes: os.freemem(), systemTotalMemoryBytes: os.totalmem() },
-    processes: { scope: 'Electron app-owned processes only', status: processInspection, items: processes },
-    window: bounds ? { bounds, visible: win.isVisible(), minimized: win.isMinimized(), focused: win.isFocused(),
-      alwaysOnTop: win.isAlwaysOnTop(), captureProtectionConfigured: win.isContentProtected(), captureCompatibilityTested: false } : null,
-    displays: screen.getAllDisplays().slice(0, 16).map(display => ({ width: display.bounds.width, height: display.bounds.height,
-      scaleFactor: display.scaleFactor, rotation: display.rotation })),
-    recovery: { available: recoveryState.available === true, enabledReported: recoveryState.enabled === true,
-      busy: recoveryState.busy === true, hasError: !!recoveryState.error, nativeIdentityVerifiedByReport: false },
-    checkpoints: { position: checkpointStatus(geometryCheckpoint?.status()),
-      answer: checkpointStatus(interruptedWork?.checkpoint.status()), historyEnabled: settings.rememberHistory },
-    connections: { credentialStorageAvailable: store.available(), selectedProvider: settings.provider,
-      chatgptConnected: chatgpt.publicState().connected, codexConnected: codex.publicState().connected,
-      apiKeyProvidersConfigured: ['anthropic', 'gemini', 'openai'].filter(provider => !!keys[provider]),
-      remoteAvailabilityTested: false },
-    files, dependencies: { scope: 'declared direct dependencies; not a complete SBOM', ...metadata.dependencies },
-    signatures: { verification: 'not-performed', signingConfigured: metadata.build?.win?.signExecutable !== false },
-    limits: ['No other application is inspected or modified.', 'No prompts, keys, account identities, images, raw arguments or error messages are recorded.',
-      'Call duration and main-process CPU deltas include overlapping activity; logger timing is a partial instrumentation cost, not a benchmark.',
-      'A file hash identifies the observed file; it does not establish trust or compare against a signed baseline.',
-      'Recovery enabled status is cached app state, not proof that the native helper is healthy.']
-  };
-}
-async function exportDiagnostics() {
-  if (diagnosticsExportBusy) throw new Error('A diagnostic export is already in progress.');
-  diagnosticsExportBusy = true;
-  try {
-    const result = await dialog.showSaveDialog(win, { title: 'Export OpenCluely diagnostics', defaultPath: 'OpenCluely-diagnostics.json',
-      filters: [{ name: 'Diagnostic JSON', extensions: ['json'] }] });
-    if (result.canceled || !result.filePath) return false;
-    const report = await diagnosticReport();
-    await fs.promises.writeFile(result.filePath, JSON.stringify(report, null, 2), { encoding: 'utf8', mode: 0o600 });
-    return true;
-  } finally { diagnosticsExportBusy = false; }
 }
 async function openScreenSettings() {
   if (!platform.mac) return false;
@@ -772,12 +705,6 @@ function requestKeyboardFocus(field = 'question') {
 }
 function registerIPC() {
   handle('state', currentState); handle('ask', ask);
-  handle('set-diagnostics-recording', enabled => {
-    if (typeof enabled !== 'boolean') throw new Error('Choose whether diagnostic recording is on or off.');
-    if (enabled) diagnostics.start(); else diagnostics.stop();
-    syncState(); return diagnostics.status();
-  });
-  handle('export-diagnostics', exportDiagnostics);
   handle('focus-field', requestKeyboardFocus);
   handle('cancel', () => { pendingAsk?.controller.abort(); active?.controller.abort(); return true; });
   handle('set-attachments', ids => {
@@ -853,8 +780,7 @@ function registerIPC() {
   });
   handle('hide', hideOverlay); handle('pass-through', togglePassThrough); handle('compact', toggleCompact);
   handle('copy', async text => { if (typeof text !== 'string' || text.length > 80000) throw new Error('Invalid clipboard text.'); await clipboard.writeText(text); return true; });
-  handle('quit', () => requestQuit());
-  handle('quit-completely', () => requestQuit(true));
+  handle('quit', requestQuit);
 }
 function registerShortcuts() {
   const commands = [
@@ -894,7 +820,7 @@ async function initialize() {
       { label: app.getName(), submenu: [
         { role: 'about' }, { type: 'separator' }, { role: 'services' }, { type: 'separator' },
         { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' },
-        { label: 'Quit OpenCluely', accelerator: 'Command+Q', click: () => requestQuit() }
+        { label: 'Quit OpenCluely', accelerator: 'Command+Q', click: requestQuit }
       ] }, { role: 'editMenu' },
       { label: 'Overlay', submenu: [{ label: 'Settings…', accelerator: 'Command+,', click: () => { showOverlay(true); emit({ type: 'open-settings' }); } }] }
     ]));
@@ -929,8 +855,6 @@ async function initialize() {
   interruptedWork = new InterruptedWork({ store, enabled: () => settings.rememberHistory && store.available(), report: warn });
   // Temporary Keychain unavailability must not delete an existing checkpoint.
   lastAttempt = store.available() ? interruptedWork.restore(history) : null;
-  geometryCheckpoint = new CheckpointWriter({ write: persistGeometry, interval: 350,
-    report: () => warn('Window position could not be saved. Check available storage.') });
   const overlaySession = session.fromPartition('overlay-memory');
   overlaySession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   overlaySession.setPermissionCheckHandler(() => false);
@@ -944,24 +868,15 @@ async function initialize() {
   if (!platform.mac) tray.on('click', () => showOverlay(false));
   updateTray();
   registerIPC(); registerShortcuts();
-  for (const event of ['display-added', 'display-removed', 'display-metrics-changed']) screen.on(event, () => {
-    diagnostics.lifecycle('display-change'); fitWindow(); syncState();
-  });
-  powerMonitor.on('resume', () => { diagnostics.lifecycle('resume'); applyWindowMode(); fitWindow(); syncState(); });
-  powerMonitor.on('suspend', () => {
-    // Persist before aborting: Windows may suspend before the async request
-    // cancellation handler runs. Never block suspend or restart a request.
-    diagnostics.lifecycle('suspend'); flushWindowState(); interruptedWork?.flush(); active?.controller.abort();
-  });
-  powerMonitor.on('lock-screen', () => { diagnostics.lifecycle('lock'); flushWindowState(); interruptedWork?.flush(); });
-  powerMonitor.on('unlock-screen', () => { diagnostics.lifecycle('unlock'); applyWindowMode(); fitWindow(); syncState(); });
+  for (const event of ['display-added', 'display-removed', 'display-metrics-changed']) screen.on(event, () => { fitWindow(); syncState(); });
+  powerMonitor.on('resume', () => { applyWindowMode(); fitWindow(); syncState(); });
+  powerMonitor.on('suspend', () => { active?.controller.abort(); });
   powerMonitor.on('shutdown', () => allowSessionEnd(true));
   if (recovery.available) {
     try { await recovery.enable({ sessionId: automaticSession }); }
     catch { log('automatic-reopening-start-failed'); }
   }
   initializationComplete = true;
-  diagnostics.lifecycle('ready');
   log('app-ready');
   if (!testMode) {
     void refreshModels();
@@ -975,7 +890,7 @@ async function initialize() {
     }).catch(() => { log('codex-restore-unavailable'); });
   }
   if (testMode) {
-    await require(interruptionTestMode ? '../tests/interruption-electron' : quitTestMode ? '../tests/quit-electron' : '../tests/smoke-electron').run({ app, getWindow: () => win, store, currentState, ask, saveSettings, refreshModels, requestKeyboardFocus, importImage, capture, images, showOverlay, hideOverlay, togglePassThrough, toggleCompact, requestQuit, setRecoveryEnabled, changeConversation, cancelSessionEnd, allowSessionEnd,
+    await require(interruptionTestMode ? '../tests/interruption-electron' : quitTestMode ? '../tests/quit-electron' : '../tests/smoke-electron').run({ app, getWindow: () => win, store, currentState, ask, saveSettings, refreshModels, requestKeyboardFocus, importImage, capture, images, showOverlay, hideOverlay, togglePassThrough, toggleCompact, requestQuit, setRecoveryEnabled, changeConversation, cancelSessionEnd,
       setModelLister: fn => { const previous = modelLister; modelLister = fn; return previous; },
       setChatGPTController: controller => { const previous = chatgpt; chatgpt = controller; chatgptSessionEpoch++; loadChatGPTProfile(true); syncState(); return previous; },
       setCodexController: controller => { const previous = codex; codex = controller; codexEpoch++; codexChanged(); return previous; },
@@ -993,17 +908,10 @@ else {
   app.on('window-all-closed', () => { /* The tray owns lifetime; closing the UI keeps the app running. */ });
   app.on('before-quit', event => {
     if (quitGuard.preventQuit()) { event.preventDefault(); return; }
-    // An allowed cooperative Quit still uses the verified reopening path.
-    // Session end and an already confirmed complete exit bypass this branch.
-    if (!quitGuard.approved && !quitGuard.sessionEnding && recovery?.available && recovery.enabled) {
-      event.preventDefault(); void requestQuit(); return;
-    }
-    flushWindowState(); interruptedWork?.flush();
-    // Only a prepared ordinary Quit keeps its verified supervisor. Explicit
-    // complete exit and Windows shutdown always disarm it.
-    if (!reopenAfterQuit || quitGuard.sessionEnding) recovery?.disarmForSessionEnd();
-    diagnostics.lifecycle('quit');
-    quitting = true; pendingAsk?.controller.abort(); active?.controller.abort(); geometryCheckpoint?.cancel();
+    interruptedWork?.flush();
+    // An accepted ordinary quit is intentional; only abnormal exits should reopen.
+    recovery?.disarmForSessionEnd();
+    quitting = true; pendingAsk?.controller.abort(); active?.controller.abort(); clearTimeout(geometryTimer);
     chatgpt?.cancelSignIn();
     codex?.stop();
     if (settings && store) {
@@ -1018,5 +926,5 @@ else {
     else { dialog.showErrorBox('OpenCluely could not start', 'The app could not initialize. Reopen it or reinstall the app. Your saved data is preserved.'); app.exit(1); }
   });
 }
-process.on('uncaughtException', () => { diagnostics.lifecycle('fatal'); log('main-process-fatal'); app.exit(1); });
+process.on('uncaughtException', () => { log('main-process-fatal'); app.exit(1); });
 process.on('unhandledRejection', () => { log('unhandled-operation'); });

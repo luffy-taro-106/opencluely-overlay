@@ -2,7 +2,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { BrowserWindow, nativeImage, desktopCapturer, screen, safeStorage, systemPreferences, dialog, clipboard, ClipboardItem, globalShortcut, powerMonitor } = require('electron');
+const { BrowserWindow, nativeImage, desktopCapturer, screen, safeStorage, systemPreferences, dialog, clipboard, ClipboardItem, globalShortcut } = require('electron');
 const { Store } = require('../overlay/storage');
 const { setTimeout: delay } = require('node:timers/promises');
 const { execFile } = require('node:child_process');
@@ -62,23 +62,6 @@ exports.run = async runtime => {
       runtime.toggleCompact(); assert.ok(Math.abs(win.getBounds().height - 122) <= 2, 'Native border may add two pixels');
       runtime.toggleCompact(); assert.equal(win.getBounds().height,height);
       runtime.hideOverlay();
-    });
-    await test('continuous window movement checkpoints position before movement stops', async () => {
-      const originalBounds = win.getBounds(), originalWrite = runtime.store.write;
-      const snapshots = [];
-      runtime.store.write = function(name, value, encrypted) {
-        const result = originalWrite.call(this, name, value, encrypted);
-        if (name === 'preferences.json') snapshots.push({ ...value.bounds });
-        return result;
-      };
-      try {
-        for (let i = 1; i <= 8; i++) {
-          win.setBounds({ ...originalBounds, x: originalBounds.x + i });
-          win.emit('move'); await delay(75);
-        }
-        assert.ok(snapshots.length > 0, 'Continuous movement must not postpone every save');
-        await until(() => runtime.store.read('preferences.json', {}).bounds?.x === win.getBounds().x);
-      } finally { runtime.store.write = originalWrite; win.setBounds(originalBounds); }
     });
     if (process.platform === 'win32') await test('Windows passive panel preserves browser focus and requests typing only for its own fields', async () => {
       const browser = new BrowserWindow({ show: false, width: 500, height: 350, webPreferences: { sandbox: true } });
@@ -345,37 +328,6 @@ exports.run = async runtime => {
       assert.equal(await js('document.getElementById("question").readOnly'), false);
       if (process.platform === 'darwin') assert.equal(runtime.currentState().panelBehavior.preventsActivation, true);
     });
-    await test('suspend notification synchronously saves pending answer and position before cancellation', async () => {
-      const originalBounds = win.getBounds();
-      const previous = runtime.setAnswerFunction(async ({ onDelta, signal }) => {
-        onDelta('Partial answer immediately before sleep');
-        await new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('Stopped for sleep')), { once: true }));
-      });
-      try {
-        await runtime.ask({ text: 'Suspend checkpoint fixture' });
-        win.setBounds({ ...originalBounds, x: originalBounds.x + 12 });
-        powerMonitor.emit('suspend');
-        assert.equal(runtime.store.read('interrupted-work.enc', null, true).text, 'Partial answer immediately before sleep');
-        assert.equal(runtime.store.read('preferences.json', {}).bounds.x, win.getBounds().x);
-        await until(() => !runtime.currentState().busy);
-        assert.match(runtime.currentState().lastAttempt.text, /before sleep/);
-      } finally { runtime.cancel(); runtime.setAnswerFunction(previous); win.setBounds(originalBounds); }
-    });
-    await test('lock and unlock notifications preserve an active answer and flush its checkpoint', async () => {
-      const previous = runtime.setAnswerFunction(async ({ onDelta, signal }) => {
-        onDelta('Answer continuing through a lock notification');
-        await new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('Stopped by fixture')), { once: true }));
-      });
-      try {
-        await runtime.ask({ text: 'Lock checkpoint fixture' });
-        powerMonitor.emit('lock-screen');
-        assert.equal(runtime.currentState().busy, true);
-        assert.equal(runtime.store.read('interrupted-work.enc', null, true).text, 'Answer continuing through a lock notification');
-        powerMonitor.emit('unlock-screen'); assert.equal(runtime.currentState().busy, true);
-        assert.equal(win.isAlwaysOnTop(), true);
-        runtime.cancel(); await until(() => !runtime.currentState().busy);
-      } finally { runtime.cancel(); runtime.setAnswerFunction(previous); }
-    });
     await test('renderer crash preserves an active provider request and its encrypted checkpoint', async () => {
       let pendingSignal;
       runtime.setAnswerFunction(async ({ signal, onDelta }) => {
@@ -505,39 +457,6 @@ exports.run = async runtime => {
         dialog.showOpenDialog=async()=>({canceled:true,filePaths:[]});
         assert.deepEqual((await js('window.overlay.upload()')).value,[]);
       } finally {dialog.showOpenDialog=originalOpen;dialog.showSaveDialog=originalSave;}
-    });
-    await test('opt-in diagnostics export only app metadata and never prompts, keys or raw arguments', async () => {
-      assert.equal(runtime.currentState().diagnostics.recording, false);
-      await js('document.getElementById("settingsButton").click();document.getElementById("diagnosticsRecordButton").click()');
-      await until(() => runtime.currentState().diagnostics.recording);
-      const invalid = await js('window.overlay.ask({text:"PRIVATE_DIAGNOSTIC_PROMPT",imageIds:["PRIVATE_INVALID_ARGUMENT"]})');
-      assert.equal(invalid.ok, false);
-      const originalSave = dialog.showSaveDialog, destination = path.join(work, 'diagnostics-fixture.json');
-      try {
-        dialog.showSaveDialog = async () => ({ canceled: false, filePath: destination });
-        await js('document.getElementById("diagnosticsExportButton").click()');
-        await until(async () => fs.existsSync(destination) && !await js('document.getElementById("diagnosticsExportButton").disabled'));
-        const text = fs.readFileSync(destination, 'utf8'), report = JSON.parse(text);
-        assert.equal(report.scope, 'OpenCluely-only'); assert.equal(report.instrumentation.recording, true);
-        assert.ok(report.instrumentation.events.some(event => event.name === 'ask' && event.outcome === 'error'));
-        assert.ok(report.processes.items.some(metric => metric.pid === process.pid));
-        assert.equal(report.window.alwaysOnTop, true); assert.equal(report.recovery.nativeIdentityVerifiedByReport, false);
-        assert.ok(report.files.some(file => file.name === 'overlay/diagnostics.js' && file.sha256));
-        for (const secret of ['PRIVATE_DIAGNOSTIC_PROMPT', 'PRIVATE_INVALID_ARGUMENT', 'replacement-gemini-test-key', 'test-openai-not-a-real-api-key', 'OpenAI test answer', runtime.app.getPath('userData')]) assert.equal(text.includes(secret), false, 'Diagnostic export must exclude private values');
-        assert.equal(await js('document.getElementById("diagnosticsExportButton").disabled'), false);
-      } finally { dialog.showSaveDialog = originalSave; }
-      await js('document.getElementById("diagnosticsRecordButton").click()');
-      await until(() => !runtime.currentState().diagnostics.recording);
-      await js('document.getElementById("closeSettings").click()');
-    });
-    await test('cancelled diagnostic export and invalid recording choices preserve normal app state', async () => {
-      const originalSave = dialog.showSaveDialog;
-      try {
-        dialog.showSaveDialog = async () => ({ canceled: true });
-        assert.equal((await js('window.overlay.exportDiagnostics()')).value, false);
-        assert.equal((await js('window.overlay.setDiagnosticsRecording("yes")')).ok, false);
-        assert.equal(runtime.currentState().diagnostics.recording, false);
-      } finally { dialog.showSaveDialog = originalSave; }
     });
     await test('plain interface accepts ten images, rejects overflow, restores queued previews and sends every image', async () => {
       assert.equal(await js('!!document.querySelector(".brand,.logo,.welcome-symbol,.welcome-kicker,#welcome h1,.eyebrow")'), false);

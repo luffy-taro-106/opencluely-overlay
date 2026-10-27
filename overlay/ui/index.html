@@ -94,7 +94,7 @@
     <label class="check-label"><input id="rememberHistory" type="checkbox"><span>Restore my conversation after reopening</span></label>
     <p class="privacy-note">Also saves submitted questions and partial answers with encryption. After an interruption, saved text reappears for review; retrying sends a new request. Images and unsent drafts are not saved.</p>
     <label class="check-label"><input id="protectFromQuit" type="checkbox"><span>Protect against normal Quit requests</span></label>
-    <p class="privacy-note">Close requests hide the overlay. Normal external Quit requests are blocked. With automatic reopening enabled, Quit reopens the app. Quit completely stops the app and helper. Windows shutdown remains allowed.</p>
+    <p class="privacy-note">Close requests hide the overlay. Normal external Quit requests are blocked. Quit from this app asks for confirmation. Windows shutdown and apps that terminate processes can still stop it.</p>
     <label class="check-label"><input id="hideFromCapture" type="checkbox"><span>Hide overlay from screen sharing and recordings</span></label>
     <p class="privacy-note" id="captureNote">Capture protection covers this overlay and its Settings. Capture methods vary; check your meeting's sharing preview before relying on it. File picker dialogs may still appear.</p>
     <p class="privacy-note">Text and attached images are sent directly to your selected AI provider when you ask. Images stay in memory and are not saved with your conversation. Follow-ups can include recent images in this session.</p>
@@ -102,22 +102,16 @@
     <button type="submit" class="primary-button" id="saveButton">Save settings</button>
   </form>
   <section class="recovery-control" id="recoveryControl" aria-label="Automatic reopening" hidden>
-    <label class="check-label"><input id="recoveryEnabled" type="checkbox" aria-describedby="recoveryStatus recoveryHint recoveryError"><span>Reopen automatically after Quit, a crash or forced termination</span></label>
+    <label class="check-label"><input id="recoveryEnabled" type="checkbox" aria-describedby="recoveryStatus recoveryHint recoveryError"><span>Reopen automatically after a crash or forced termination</span></label>
     <p class="recovery-status" id="recoveryStatus" role="status" aria-live="polite"></p>
-    <p class="recovery-hint" id="recoveryHint">Applies immediately. Quit keeps reopening enabled. Quit completely stops the app and helper. Turning this off pauses reopening until the next launch.</p>
+    <p class="recovery-hint" id="recoveryHint">Applies immediately. Turning this off pauses reopening until the next launch. Quit stops the app and automatic reopening.</p>
     <p class="recovery-error" id="recoveryError" role="alert" hidden></p>
   </section>
   <section class="chat-archive" aria-label="Previous chats"><label for="chatSelect">Previous chats</label><select id="chatSelect"><option value="">Choose a previous chat…</option></select><div><button type="button" id="openChatButton" class="text-button" disabled>Open selected chat</button><button type="button" id="deleteChatButton" class="text-button danger" disabled>Delete selected chat…</button></div><p class="privacy-note">New chat saves the current conversation here. Chats restore after reopening when conversation history is enabled. Images remain in memory only.</p></section>
   <div class="shortcut-list"><span>Show / hide<kbd data-shortcut="Show / hide">Ctrl+Alt+Space</kbd></span><span>Click-through<kbd data-shortcut="Click-through">Ctrl+Alt+I</kbd></span><span>Screenshot<kbd data-shortcut="Screenshot">Ctrl+Alt+S</kbd></span></div>
   <div class="settings-warning" id="settingsWarnings" hidden></div>
-  <section class="recovery-control" aria-label="App diagnostics">
-    <p class="privacy-note">App diagnostics record call timing and success/failure in memory for this session. Reports include only OpenCluely health and file metadata; no prompts, keys, account details, images or raw arguments.</p>
-    <p id="diagnosticsStatus" class="recovery-status" role="status">Recording is off.</p>
-    <div class="session-actions"><button type="button" id="diagnosticsRecordButton" class="text-button">Start recording</button><button type="button" id="diagnosticsExportButton" class="text-button">Export diagnostic report</button></div>
-  </section>
   <div class="session-actions"><button id="exportButton" class="text-button">Export conversation</button><button id="clearButton" class="text-button danger">Clear conversation</button></div>
   <button id="quitButton" class="quit-button">Quit</button>
-  <button id="quitCompletelyButton" class="quit-button" hidden>Quit completely…</button>
 </dialog>
 <dialog id="clearDialog" class="confirm-dialog"><h2>Clear this conversation?</h2><p>This removes the conversation saved on this device and releases attached images.</p><div><button id="cancelClear" class="secondary-button">Keep conversation</button><button id="confirmClear" class="primary-button">Clear</button></div></dialog>
 <dialog id="deleteChatDialog" class="confirm-dialog"><h2>Delete this saved chat?</h2><p id="deleteChatTitle"></p><div><button id="cancelDeleteChat" class="secondary-button">Keep chat</button><button id="confirmDeleteChat" class="primary-button">Delete chat</button></div></dialog>

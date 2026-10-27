@@ -36,8 +36,5 @@ void (async () => {
   let code = await run([root, ...process.argv.slice(2)]);
   if (code === 0 && smoke) code = await run([path.join(root, 'tests', 'reopen-electron.cjs')]);
   if (code === 0 && smoke) code = await run([root, '--quit-smoke-test']);
-  if (code === 0 && smoke) code = await run([root, '--quit-reopen-smoke-test']);
-  if (code === 0 && smoke) code = await run([root, '--quit-external-smoke-test']);
-  if (code === 0 && smoke) code = await run([root, '--quit-session-end-smoke-test']);
   process.exitCode = code;
 })().catch(error => { console.error(error.message); process.exitCode = 1; });

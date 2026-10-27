@@ -3,7 +3,6 @@
 const { createHash } = require('node:crypto');
 const { validateQuestion, diskHistory, imageIds, imageNames, MAX_IMAGES } = require('./core');
 const { PROVIDERS } = require('./models');
-const { CheckpointWriter } = require('./checkpoint-writer');
 
 const FILE = 'interrupted-work.enc';
 function contextKey(history) {
@@ -15,10 +14,7 @@ function contextKey(history) {
 class InterruptedWork {
   constructor({ store, enabled, report = () => {}, interval = 1000 }) {
     this.store = store; this.enabled = enabled; this.report = report;
-    this.pending = null;
-    this.checkpoint = new CheckpointWriter({ interval,
-      write: () => { if (!this.enabled() || !this.pending) return false; this.store.write(FILE, this.pending, true); },
-      report: () => this.report('The unfinished answer could not be saved. Keep the app open or copy the text before quitting.') });
+    this.interval = interval; this.pending = null; this.timer = null;
   }
   capture(request, history) {
     if (!this.enabled()) return;
@@ -30,18 +26,23 @@ class InterruptedWork {
       imageNames: (request.images?.map(image => image.name) || imageNames(request)).slice(0, MAX_IMAGES).map(name => name.slice(0, 255)),
       text: request.text.slice(0, 80000), provider: request.provider, model: request.model
     };
-    return true;
   }
-  start(request, history) {
-    if (!this.capture(request, history)) return true;
-    this.checkpoint.mark(); return this.flush();
-  }
+  start(request, history) { this.capture(request, history); return this.flush(); }
   update(request, history) {
-    if (this.capture(request, history)) this.checkpoint.mark();
+    this.capture(request, history);
+    if (!this.pending || this.timer) return;
+    // Throttle, rather than debounce: a continuous stream still reaches disk.
+    this.timer = setTimeout(() => { this.timer = null; this.flush(); }, this.interval);
+    this.timer.unref?.();
   }
-  flush() { return this.checkpoint.flush(); }
+  flush() {
+    clearTimeout(this.timer); this.timer = null;
+    if (!this.enabled() || !this.pending) return true;
+    try { this.store.write(FILE, this.pending, true); return true; }
+    catch { this.report('The unfinished answer could not be saved. Keep the app open or copy the text before quitting.'); return false; }
+  }
   clear() {
-    this.checkpoint.cancel(); this.pending = null;
+    clearTimeout(this.timer); this.timer = null; this.pending = null;
     this.store.remove(FILE);
   }
   restore(history) {
