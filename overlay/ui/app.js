@@ -11,6 +11,7 @@ const messageContainer = $('messages');
 const content = $('content');
 let selectedDisplay = sessionStorage.getItem('display') || '';
 let recoveryRequested = null, recoveryActionError = '';
+let diagnosticsRecordingBusy = false, diagnosticsExporting = false;
 let backdropFrame = 0;
 let chatgptActionPending = false, chatgptSigningIn = false, chatgptActionError = '', signingOutProfile = null, settingsSaving = false;
 let codexActionPending = false, codexActionError = '';
@@ -246,6 +247,10 @@ function renderRecovery() {
   $('recoveryControl').hidden = !recovery?.available;
   $('recoveryEnabled').checked = !!recovery?.enabled;
   $('recoveryEnabled').disabled = !recovery?.available || !!recovery.busy || recoveryRequested !== null;
+  $('quitButton').textContent = recovery?.available && recovery.enabled ? 'Quit and reopen' : 'Quit';
+  $('quitCompletelyButton').hidden = !recovery?.available;
+  $('quitButton').disabled = !!recovery?.busy;
+  $('quitCompletelyButton').disabled = !!recovery?.busy;
   $('recoveryStatus').textContent = recoveryRequested !== null
     ? recoveryRequested ? 'Starting automatic reopening…' : 'Pausing automatic reopening…'
     : recovery?.busy ? 'Updating automatic reopening…'
@@ -254,6 +259,13 @@ function renderRecovery() {
   const error = recoveryActionError || recovery?.error || '';
   $('recoveryError').textContent = error;
   $('recoveryError').hidden = !error;
+}
+function renderDiagnostics() {
+  const recording = !!state?.diagnostics?.recording;
+  $('diagnosticsRecordButton').textContent = recording ? 'Stop recording' : 'Start recording';
+  $('diagnosticsRecordButton').disabled = diagnosticsRecordingBusy;
+  $('diagnosticsExportButton').disabled = diagnosticsExporting;
+  $('diagnosticsStatus').textContent = recording ? 'Recording app call timing for this session.' : 'Recording is off.';
 }
 function applyState(value) {
   state = value;
@@ -290,7 +302,7 @@ function applyState(value) {
   $('setupLead').textContent = chatgptSelected ? `Connect your ${accountName} account in ` : 'Add your API key in ';
   $('setupTail').textContent = chatgptSelected ? ' to use your plan.' : ' to get started.';
   $('settingsWarnings').textContent = state.warnings.join('\n'); $('settingsWarnings').hidden = !state.warnings.length;
-  renderTimeline(); updateControls(); renderRecovery(); window.overlaySelects?.refresh();
+  renderTimeline(); updateControls(); renderRecovery(); renderDiagnostics(); window.overlaySelects?.refresh();
 }
 function renderAttachments() {
   $('attachment').hidden = !attachments.length;
@@ -601,10 +613,23 @@ $('settingsForm').addEventListener('submit', async event => {
 });
 $('removeKey').addEventListener('click', guard(async () => { if (accountProvider($('settingsProvider').value)) return; applyState(await call('saveSettings', { provider: $('settingsProvider').value, removeKey: true })); populateKeyFields(); notify('Saved key removed.'); }));
 $('exportButton').addEventListener('click', guard(async () => { if (await call('export')) notify('Conversation exported.'); }));
+$('diagnosticsRecordButton').addEventListener('click', guard(async () => {
+  if (diagnosticsRecordingBusy) return;
+  diagnosticsRecordingBusy = true; renderDiagnostics();
+  try { await call('setDiagnosticsRecording', !state?.diagnostics?.recording); applyState(await call('state')); }
+  finally { diagnosticsRecordingBusy = false; renderDiagnostics(); }
+}));
+$('diagnosticsExportButton').addEventListener('click', guard(async () => {
+  if (diagnosticsExporting) return;
+  diagnosticsExporting = true; renderDiagnostics();
+  try { if (await call('exportDiagnostics')) notify('App diagnostic report exported.'); }
+  finally { diagnosticsExporting = false; renderDiagnostics(); }
+}));
 $('clearButton').addEventListener('click', () => { $('clearDialog').showModal(); });
 $('cancelClear').addEventListener('click', () => $('clearDialog').close());
 $('confirmClear').addEventListener('click', guard(async () => { await call('clear'); await setAttachments([]); $('clearDialog').close(); $('settingsDialog').close(); notify('Conversation cleared.'); }));
 $('quitButton').addEventListener('click', guard(() => call('quit')));
+$('quitCompletelyButton').addEventListener('click', guard(() => call('quitCompletely')));
 content.addEventListener('scroll', () => { scheduleBackdrop(); autoScroll = content.scrollHeight - content.scrollTop - content.clientHeight < 65; $('jumpButton').hidden = autoScroll || !(state?.history.length || state?.active); });
 $('jumpButton').addEventListener('click', () => { autoScroll = true; scrollToLatest(true); });
 

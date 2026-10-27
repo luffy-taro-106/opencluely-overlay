@@ -92,3 +92,26 @@ test('ten attachment names restore without pixels, and older single-image checkp
   store.write(FILE, saved, true);
   assert.deepEqual(work.restore([]).imageNames, ['old.png']);
 });
+
+test('failed encrypted checkpoint retries its latest text even after the stream goes quiet', async t => {
+  const { work, store, request } = setup(t);
+  const original = store.write.bind(store);
+  let attempts = 0;
+  store.write = (...args) => { if (++attempts === 1) throw new Error('Temporary storage failure'); return original(...args); };
+  assert.equal(work.start(request, []), false);
+  request.text = 'Latest text before the stream went quiet'; work.update(request, []);
+  await delay(60);
+  assert.equal(store.read(FILE, null, true).text, request.text);
+  assert.equal(attempts, 2);
+  await delay(40); assert.equal(attempts, 2, 'A clean checkpoint must remain idle');
+});
+
+test('clearing a failed checkpoint cancels retries and cannot resurrect deleted text', async t => {
+  const { work, store, request } = setup(t);
+  const original = store.write.bind(store);
+  store.write = () => { throw new Error('Temporary storage failure'); };
+  assert.equal(work.start(request, []), false);
+  work.clear(); store.write = original;
+  await delay(60);
+  assert.equal(store.read(FILE, null, true), null);
+});

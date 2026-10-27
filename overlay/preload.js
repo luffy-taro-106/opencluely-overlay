@@ -29,11 +29,14 @@ contextBridge.exposeInMainWorld('overlay', {
   openScreenSettings: () => invoke('screen-settings'),
   clear: () => invoke('clear'),
   export: () => invoke('export'),
+  setDiagnosticsRecording: enabled => invoke('set-diagnostics-recording', enabled),
+  exportDiagnostics: () => invoke('export-diagnostics'),
   hide: () => invoke('hide'),
   passThrough: () => invoke('pass-through'),
   compact: () => invoke('compact'),
   copy: text => invoke('copy', text),
   quit: () => invoke('quit'),
+  quitCompletely: () => invoke('quit-completely'),
   onEvent: callback => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on('overlay:event', listener);

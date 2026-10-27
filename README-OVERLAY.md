@@ -1,4 +1,4 @@
-# OpenCluely Overlay 2.3.8 for Windows
+# OpenCluely Overlay 2.5.3 for Windows
 
 A Windows desktop assistant that stays above your apps and answers text and image questions using **OpenAI / ChatGPT**, **Claude**, or **Gemini**.
 
@@ -6,7 +6,7 @@ Built from [arth-agrawal/OpenCluely](https://github.com/arth-agrawal/OpenCluely)
 
 ## Get started
 
-1. Install an available Windows setup from [Releases](https://github.com/luffy-taro-106/opencluely-overlay/releases). The 2.3 source build produces `dist/OpenCluely-Overlay-Setup-2.3.8.exe`. Check the [port record](docs/WINDOWS-PORT.md) for validation and publication status.
+1. Install an available Windows setup from [Releases](https://github.com/luffy-taro-106/opencluely-overlay/releases). The current source build produces `dist/OpenCluely-Overlay-Setup-2.5.3.exe`. Check the [port record](docs/WINDOWS-PORT.md) for validation and publication status.
 2. Click the gear, choose OpenAI / ChatGPT, Claude, or Gemini, select a model, enter your provider API key, and save. The app checks API access before saving it encrypted on this device. Save a separate key for each provider you use. Saved keys restore after the app or computer restarts. To replace a key, enter the new key and save; a failed check preserves the previous key. Leave the field blank to keep it.
 3. Type a question and press Enter. Shift+Enter adds a new line.
 4. For an image question, use the image button, paste from the clipboard, drag an image onto the window, or take a screenshot. Preview the image, optionally type a question, and press Enter. With no text, the assistant reads and answers the question in the image.
@@ -19,10 +19,10 @@ These are unsigned development builds; Windows may show a publisher warning. Pub
 - Showing the overlay, taking a screenshot and using pointer controls preserve browser focus. Click the question or another editable field to type normally; Windows temporarily activates the overlay for keyboard input. Clicking back in the browser restores passive behavior automatically. See [Windows focus behavior](docs/NONACTIVATING-PANEL.md).
 - The pointer button enables click-through, allowing mouse and keyboard input to reach the app underneath. Use Ctrl+Alt+I or the tray to interact again.
 - The compact button collapses the conversation to a small toolbar.
-- The minus button, Escape, and the normal close action hide to the tray. The process and active answer keep running. Quit explicitly through the tray or Settings.
-- **Protect against normal Quit requests** is enabled by default, including for existing profiles. Cooperative external Quit requests are rejected. OpenCluely's own Quit asks for confirmation; **Keep running** is the default choice. A confirmed Quit stops automatic reopening before closing the app.
+- The minus button, Escape, and the normal close action hide to the tray. The process and active answer keep running. Settings and the tray provide separate **Quit and reopen** and **Quit completely** actions when installed recovery is available.
+- **Protect against normal Quit requests** is enabled by default, including for existing profiles. Cooperative external Quit requests are rejected. With automatic reopening enabled, **Quit and reopen** confirms and preserves the verified helper so it can reopen the app hidden in the tray. **Quit completely** confirms and stops both. **Keep running** is the default choice in both dialogs. If reopening is paused, ordinary Quit leaves it paused and stops the app.
 - Enable Start in tray when I sign in in the installed app to launch with Windows. This option is disabled in portable/source builds because their executable path may be temporary.
-- The installed app enables **Reopen automatically after a crash or forced close** whenever you open it. Pause reopening immediately in Settings or the tray. A manual app open enables it again; showing the overlay with its shortcut preserves the pause. See [helper operation and emergency stop](docs/AUTOMATIC-REOPENING.md).
+- The installed app enables **Reopen automatically after Quit, a crash or forced termination** whenever you open it. Pause reopening immediately in Settings or the tray. A manual app open enables it again; showing the overlay with its shortcut preserves the pause. See [helper operation and emergency stop](docs/AUTOMATIC-REOPENING.md).
 - Closing other apps does not close this assistant. Recovery uses a separate owner-controlled, per-user helper, without administrator access or a Windows service. It does not control, inject into, or repeatedly refocus other apps.
 - Hide overlay from screen sharing and recordings is enabled by default, including for existing profiles. It protects the overlay and its in-window Settings, and stays enabled after sleep, recovery and restart. You can turn it off in Settings.
 
@@ -66,7 +66,7 @@ Capture exclusion uses Electron's content protection and Windows `WDA_EXCLUDEFRO
 
 Includes a single-instance lock, close-to-tray lifetime, a cooperative quit guard, owner-controlled main-process reopening, renderer crash recovery with loop limits, suspend cancellation, resume handling, bounded caches, checked IPC callers, monitor-boundary recovery, and atomic settings/history writes. Screenshots are taken only when requested, previewed before sending, and never captured on a timer.
 
-Normal close protection handles cooperative requests. Task Manager, process termination, shutdown/sign-out, and sufficiently privileged software can still stop the app or its helper. Recovery attempts to reopen an unexpectedly stopped app while enabled; repeated terminations can keep interrupting it. Explicit Quit, pausing recovery, shutdown and sign-out remain under your control. There is no guarantee against every third-party closing tool or capture method.
+Normal close protection handles cooperative requests. Task Manager, process termination, shutdown/sign-out, and sufficiently privileged software can still stop the app or its helper. Recovery attempts to reopen the app after ordinary Quit or an unexpected exit while enabled; repeated terminations can keep interrupting it. **Quit completely**, pausing recovery, shutdown and sign-out remain under your control. There is no guarantee against every third-party closing tool or capture method.
 
 The app cannot run while the computer sleeps or is off. UAC/security screens and some exclusive fullscreen applications prevent ordinary overlays. Sleep cancels active requests; retry after resume. Renderer recovery preserves a healthy request in the main process. Main-process termination loses its connection, unsent draft, image pixels and output since the latest successful checkpoint. Saved partial text and completed conversations restore when restoration is enabled. Login startup remains a separate preference and starts the app after Windows sign-in, not before the computer is powered on.
 

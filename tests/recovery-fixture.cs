@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
@@ -29,6 +30,11 @@ internal static class RecoveryFixture
     {
         try
         {
+            if (args.Length == 2 && args[0] == "--quit-normally")
+            {
+                using (var stop = EventWaitHandle.OpenExisting(@"Local\OpenCluelyFixtureQuit-" + args[1])) stop.Set();
+                return 0;
+            }
             if (args.Length == 2 && args[0] == "--query-session-end")
             {
                 uint target = UInt32.Parse(args[1]);
@@ -60,7 +66,12 @@ internal static class RecoveryFixture
             File.AppendAllText(eventPath, Json.Serialize(record) + "\n", new UTF8Encoding(false));
             Write(statePath, new { version = 1, sessionId = token, enabled = true, pid = record.pid,
                 executablePath = Process.GetCurrentProcess().MainModule.FileName });
-            Application.Run();
+            using (var stop = new EventWaitHandle(false, EventResetMode.ManualReset, @"Local\OpenCluelyFixtureQuit-" + record.pid))
+            {
+                var waiter = ThreadPool.RegisterWaitForSingleObject(stop, (unused, expired) => Application.Exit(), null, -1, true);
+                Application.Run();
+                waiter.Unregister(null);
+            }
             return 0;
         }
         catch { return 1; }

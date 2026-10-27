@@ -1,3 +1,15 @@
+# Windows 2.5.3 app diagnostics — 27 October 2026
+
+Built locally with opt-in, app-owned call instrumentation and a redacted local report. All 218 suite checks pass, and packaged components match source. The running user installation has not been replaced by this build. See [feature coverage](DIAGNOSTICS.md) and [verification/installation status](VERIFICATION-2.5.3.md).
+
+---
+
+# Windows 2.5.2 checkpoint update — 27 October 2026
+
+Installed locally with bounded failed-save retries, continuous-movement position checkpoints and a synchronous flush before suspend. Existing helper and Quit semantics are preserved. All 205 automated checks pass. The user confirmed Enabled / running and a fresh helper process was observed; the separate file-based identity check remains unresolved. See [the verification record](VERIFICATION-2.5.2.md) and [architecture/source structure](RECOVERY-ARCHITECTURE.md).
+
+---
+
 # Windows 2.3.8 update — 24 October 2026
 
 Reference: Mac commit `5fd5ab805d465f04586831d67b782853566a8859`, including live-model and reasoning changes from `16c0e5f`. The Windows-specific focus controller uses Electron/Win32 no-activation behavior. Ordinary display, screenshot restoration, pointer controls and leaving click-through remain passive. A genuine click in an editable field, Ctrl+Alt+T or the explicit tray typing action enables ordinary Windows keyboard focus. Returning to another app releases it. Typing temporarily activates the overlay; the Mac inactive-application/key-panel behavior is not claimed on Windows. See [focus behavior](NONACTIVATING-PANEL.md).
@@ -60,7 +72,7 @@ Port prepared on 17 October 2026 from [ashokchilka99/mac-godsplan](https://githu
 | New chat and saved conversations | Encrypted current chat and archives, reopen/delete controls, legacy conversation migration; image pixels are never saved. |
 | Normal Quit protection | Enabled by default; ordinary close hides to tray, cooperative Quit is guarded, explicit Quit asks for confirmation. |
 | Reopen after unexpected termination | Windows C#/.NET Framework helper with process-exit events, state-change notifications and bounded retry backoff. |
-| Pause and explicit Quit controls | Immediate Settings/tray pause; confirmed Quit disarms helper before closing; next manual app open enables recovery again. |
+| Pause and explicit Quit controls | Immediate Settings/tray pause; 2.5.1 preserves the helper for ordinary Quit and disarms it for Quit completely; next manual app open enables recovery again. |
 | Start at login | Existing per-user Windows Run registration with `--background`, separate from recovery. |
 | macOS session/permission integration | Windows session-end handling; Mac Screen Recording settings, Keychain, Dock/Spaces and launchctl code are not used. |
 | Renderer and process reliability | Sandboxed renderer, caller-checked IPC, renderer recovery, single instance, suspend cancellation and display-boundary recovery. |

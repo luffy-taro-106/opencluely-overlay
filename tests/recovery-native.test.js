@@ -120,6 +120,23 @@ test('Windows session-end query disarms native recovery without vetoing shutdown
   kill(first.pid);
   await delay(2300); assert.equal(events(fixture.eventPath).length, 1);
 });
+test('native supervisor reopens after a normal successful Quit and respects complete stop', { skip: !windows, timeout: 20000 }, async t => {
+  const fixture = compileFixture(t);
+  const firstChild = spawn(fixture.executablePath, [], { stdio: 'ignore', windowsHide: true });
+  const first = await until(() => json(fixture.statePath)); fixture.pids.add(first.pid);
+  const supervisor = fixture.startHelper();
+  await until(() => json(path.join(fixture.directory, 'helper.json')));
+  await delay(100);
+  const quit = spawnSync(fixture.executablePath, ['--quit-normally', String(first.pid)], { windowsHide: true });
+  assert.equal(quit.status, 0);
+  assert.equal(await exit(firstChild), 0);
+  const second = await until(() => { const state = json(fixture.statePath); return state?.pid !== first.pid && state; });
+  fixture.pids.add(second.pid); assert.equal(second.sessionId, first.sessionId);
+  writePrivate(fixture.statePath, { ...second, enabled: false });
+  assert.equal(await exit(supervisor), 0);
+  assert.equal(spawnSync(fixture.executablePath, ['--quit-normally', String(second.pid)], { windowsHide: true }).status, 0);
+  await delay(2300); assert.equal(events(fixture.eventPath).length, 2);
+});
 
 test('stale tokens, target changes and deleted state stop native recovery', { skip: !windows, timeout: 15000 }, async t => {
   const fixture = compileFixture(t);

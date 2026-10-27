@@ -67,7 +67,7 @@ function verifyHelper(helperPath, readyPath, sessionId) {
 }
 
 // This is an ordinary user-owned process, never a service, scheduled task or
-// privileged process. Explicit Quit always disarms its session before exiting.
+// privileged process. Quit completely disarms its session before exiting.
 class WindowsRecovery {
   constructor({ available = false, directory, executablePath, helperPath, pid = process.pid,
     onChange = () => {}, prepare = prepareDirectory, launch = launchHelper, isAlive = processAlive, verify = verifyHelper,
@@ -219,6 +219,19 @@ class WindowsRecovery {
   async stopForQuit() {
     if (this.pending) { try { await this.pending; } catch {} }
     if (this.available) await this.disable();
+  }
+  async keepForQuit() {
+    if (this.pending) { try { await this.pending; } catch {} }
+    // Pausing reopening and Windows session end take precedence over relaunch.
+    if (!this.available || this.sessionEnding || !this.enabled) return false;
+    const generation = this.generation, token = this.sessionId;
+    return this.operation(async () => {
+      const verified = this.acceptsSession(token) && this.helperReady(token) &&
+        await this.verify(this.helperPath, this.readyPath, token);
+      if (this.sessionEnding || this.generation !== generation || !this.acceptsSession(token)) return false;
+      if (!verified) throw new Error('Automatic reopening is unavailable. Keep the app open, re-enable reopening, or choose Quit completely.');
+      return true;
+    });
   }
   disarmForSessionEnd({ terminal = true } = {}) {
     this.generation++;

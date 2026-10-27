@@ -1,0 +1,266 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.5.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:fbc2d246-1257-4dfe-8d6b-7add024076bd",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-10-27T14:35:17.657Z",
+    "lifecycles": [
+      {
+        "phase": "build"
+      }
+    ],
+    "tools": [
+      {
+        "vendor": "npm",
+        "name": "cli",
+        "version": "11.11.0"
+      }
+    ],
+    "component": {
+      "bom-ref": "opencluely-overlay@2.5.3",
+      "type": "library",
+      "name": "OpenCluely",
+      "version": "2.5.3",
+      "scope": "required",
+      "author": "OpenCluely contributors",
+      "description": "Windows desktop overlay with OpenAI, Claude, Gemini, saved chats and owner-controlled automatic reopening",
+      "purl": "pkg:npm/opencluely-overlay@2.5.3",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/luffy-taro-106/opencluely-overlay.git"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "bom-ref": "@openai/codex@0.164.0",
+      "type": "library",
+      "name": "@openai/codex",
+      "version": "0.164.0",
+      "scope": "required",
+      "description": "Codex CLI is a coding agent from OpenAI that runs locally on your computer.",
+      "purl": "pkg:npm/%40openai/codex@0.164.0",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.164.0.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/openai/codex.git"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "4d68fb506c8f45edcf8ff03775d340c6cd6d7b76bf5bfc4077e2742c7aeb1539ac49f6a118c38b17fbe7f3c0f7402220013dc1d6b9b5cbf677358134af1e9c65"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "@openai/codex@0.164.0-win32-x64",
+      "type": "library",
+      "name": "@openai/codex-win32-x64",
+      "version": "0.164.0-win32-x64",
+      "scope": "optional",
+      "purl": "pkg:npm/%40openai/codex@0.164.0-win32-x64",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.164.0-win32-x64.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/openai/codex.git"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "bab58f87087d61abeea003c89265582814ed7793ad1952f82a2d056f6f1d84afcccfa3ede0b4b2fa06d1ad9173e7e457af0f6e6ef5ee5c309c77c6de61c5a10e"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "@types/trusted-types@2.0.7",
+      "type": "library",
+      "name": "@types/trusted-types",
+      "version": "2.0.7",
+      "scope": "optional",
+      "description": "TypeScript definitions for trusted-types",
+      "purl": "pkg:npm/%40types/trusted-types@2.0.7",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@types/trusted-types/-/trusted-types-2.0.7.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/trusted-types"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "49c68f767d5d41cce06e5d101537933a65471542eddfde17260390368c95859eabdaf2e730b25f04f779dd2079d93ff71b7e95235fe0d8c65a5f47300ee5ec7f"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "dompurify@3.4.17",
+      "type": "library",
+      "name": "dompurify",
+      "version": "3.4.17",
+      "scope": "required",
+      "author": "Dr.-Ing. Mario Heiderich, Cure53 <mario@cure53.de> (https://cure53.de/)",
+      "description": "DOMPurify is a DOM-only, super-fast, uber-tolerant XSS sanitizer for HTML, MathML and SVG. It runs as JavaScript and works in all modern browsers, as well as in Node.js (via jsdom). DOMPurify is written by security people who have vast background in web attacks and XSS. Fear not.",
+      "purl": "pkg:npm/dompurify@3.4.17",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/dompurify/-/dompurify-3.4.17.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git://github.com/cure53/DOMPurify.git"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/cure53/DOMPurify"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/cure53/DOMPurify/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "07fa52958547439f24a88483ff20e3b89d727f3237e26d60178940a1dd9bc1246188de0ae429771fc01fee1a81d8f9932fdd75b5d12e7679d79f9167851a33d3"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "(MPL-2.0 OR Apache-2.0)"
+        }
+      ]
+    },
+    {
+      "bom-ref": "marked@18.1.1",
+      "type": "library",
+      "name": "marked",
+      "version": "18.1.1",
+      "scope": "required",
+      "author": "Christopher Jeffrey",
+      "description": "A markdown parser built for speed",
+      "purl": "pkg:npm/marked@18.1.1",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/marked/-/marked-18.1.1.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/markedjs/marked.git"
+        },
+        {
+          "type": "website",
+          "url": "https://marked.js.org"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/markedjs/marked/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "cc41a0aed506f1cae4f93acc69c252540054e036030e44bcbaa814de886b9ffd9f5bd0b60047d4acede6e8886922942997b61c5698975c2f5c48c58300d4f776"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "opencluely-overlay@2.5.3",
+      "dependsOn": [
+        "@openai/codex@0.164.0",
+        "dompurify@3.4.17",
+        "marked@18.1.1"
+      ]
+    },
+    {
+      "ref": "@openai/codex@0.164.0",
+      "dependsOn": [
+        "@openai/codex@0.164.0-win32-x64"
+      ]
+    },
+    {
+      "ref": "@openai/codex@0.164.0-win32-x64",
+      "dependsOn": []
+    },
+    {
+      "ref": "@types/trusted-types@2.0.7",
+      "dependsOn": []
+    },
+    {
+      "ref": "dompurify@3.4.17",
+      "dependsOn": [
+        "@types/trusted-types@2.0.7"
+      ]
+    },
+    {
+      "ref": "marked@18.1.1",
+      "dependsOn": []
+    }
+  ]
+}
