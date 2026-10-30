@@ -17,7 +17,7 @@ class InterruptedWork {
     this.store = store; this.enabled = enabled; this.report = report;
     this.pending = null;
     this.checkpoint = new CheckpointWriter({ interval,
-      write: () => { if (!this.enabled() || !this.pending) return false; this.store.write(FILE, this.pending, true); },
+      write: () => { if (this.enabled() && this.pending) this.store.write(FILE, this.pending, true); },
       report: () => this.report('The unfinished answer could not be saved. Keep the app open or copy the text before quitting.') });
   }
   capture(request, history) {

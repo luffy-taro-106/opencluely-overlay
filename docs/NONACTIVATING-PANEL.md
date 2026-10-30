@@ -1,5 +1,7 @@
 # Windows browser-focus behavior
 
+The 30 October 2026 appearance patch preserves the keyboard policy below. The theme button uses the existing passive window and does not request focus. Repeated clicks within an already focused text editor skip redundant focus IPC/native focus calls. As requested, there is no new strict-focus mode or input redirection.
+
 In 2.4.1, dropdowns use in-window listboxes instead of native Windows select popups. Provider, model, reasoning, display, account and saved-chat selections can therefore open and choose an option without activating the overlay. Keyboard interaction remains available after explicitly focusing the overlay. State refreshes preserve an open menu when its choices have not changed.
 
 Adapted from Mac reference 5fd5ab805d465f04586831d67b782853566a8859 on 24 October 2026.

@@ -1,6 +1,6 @@
-# OpenCluely Overlay 2.5.3 for Windows
+# OpenCluely Overlay 2.5.2 for Windows
 
-Version 2.5.3 adds opt-in diagnostics for OpenCluely's own calls, processes, window, checkpoints and component files, with a redacted local JSON export. It also saves pending state on lock notifications. The existing Windows watchdog, Quit controls, provider accounts and text/image features are preserved. See [diagnostic scope and controls](docs/DIAGNOSTICS.md), [2.5.3 validation](docs/VERIFICATION-2.5.3.md), [recovery architecture](docs/RECOVERY-ARCHITECTURE.md), and [account setup](docs/CHATGPT-SIGN-IN.md). The source produces `dist/OpenCluely-Overlay-Setup-2.5.3.exe`; older download links below refer to earlier releases.
+Based on the verified original 2.5.2 Electron implementation, with the three requested Ctrl+Shift shortcut aliases and a saved dark/light appearance toggle. Light mode uses neutral white surfaces for white workspaces; dark mode keeps the original palette. Typing behavior is unchanged, with redundant focus requests removed. All original Ctrl+Alt shortcuts remain. Newer native Settings, performance and diagnostic modules are absent. See [appearance and focus](docs/APPEARANCE.md), [restoration provenance](docs/RESTORE-2.5.2.md), [original 2.5.2 validation](docs/VERIFICATION-2.5.2.md), [recovery architecture](docs/RECOVERY-ARCHITECTURE.md), and [account setup](docs/CHATGPT-SIGN-IN.md). The source produces `dist/OpenCluely-Overlay-Setup-2.5.2.exe`; older download links below refer to earlier public releases.
 
 Windows desktop assistant for text and image questions using **ChatGPT, Codex, OpenAI API, Claude, or Gemini**, adapted from the updated [Mac version](https://github.com/luffy-taro-106/mac-godsplan).
 
@@ -21,7 +21,7 @@ Windows desktop assistant for text and image questions using **ChatGPT, Codex, O
 
 Download the [Windows 2.3.8 installer](https://github.com/luffy-taro-106/opencluely-overlay/releases/download/v2.3.8/OpenCluely-Overlay-Setup-2.3.8.exe) or the [complete Codex setup bundle](https://github.com/luffy-taro-106/opencluely-overlay/releases/download/v2.3.8/OpenCluely-Windows-2.3.8-Codex-Setup.zip), including the installer, source, setup guides, and SHA-256 verification manifest.
 
-Build the Windows installer as `dist/OpenCluely-Overlay-Setup-2.5.1.exe`. These are unsigned development builds. See the [Windows port status](docs/WINDOWS-PORT.md) for the original reference revision and [2.5.0 verification](docs/VERIFICATION-2.5.0.md) for the preceding release's results.
+Build the Windows installer as `dist/OpenCluely-Overlay-Setup-2.5.2.exe`. These are unsigned development builds. See the [restoration record](docs/RESTORE-2.5.2.md) for the installed result and the [Windows port status](docs/WINDOWS-PORT.md) for earlier history.
 
 See [setup, controls, privacy and development](README-OVERLAY.md), [automatic reopening and emergency stop](docs/AUTOMATIC-REOPENING.md), and [startup and shortcuts](docs/STARTUP.md).
 

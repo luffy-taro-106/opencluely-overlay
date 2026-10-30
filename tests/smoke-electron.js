@@ -93,6 +93,14 @@ exports.run = async runtime => {
         assert.throws(() => runtime.requestKeyboardFocus('other-window'), /editable overlay field/);
         runtime.requestKeyboardFocus('question');
         await until(() => win.isFocused()); await js('document.getElementById("question").focus()');
+        const originalWindowFocus = win.focus, originalContentsFocus = win.webContents.focus;
+        let redundantFocusCalls = 0;
+        try {
+          win.focus = () => { redundantFocusCalls++; };
+          win.webContents.focus = () => { redundantFocusCalls++; };
+          runtime.requestKeyboardFocus('question');
+          assert.equal(redundantFocusCalls, 0, 'An already focused editor must not request native focus again');
+        } finally { win.focus = originalWindowFocus; win.webContents.focus = originalContentsFocus; }
         for (const character of 'Windows focus verification') win.webContents.sendInputEvent({ type: 'char', keyCode: character });
         await until(async () => await js('document.getElementById("question").value === "Windows focus verification"'));
         assert.equal(await browser.webContents.executeJavaScript('document.getElementById("browser").value'), '');
@@ -172,8 +180,11 @@ exports.run = async runtime => {
       runtime.setKeyValidator(async () => { await delay(60); return true; });
       await js('document.getElementById("settingsButton").click();document.getElementById("apiKey").value="replacement-gemini-test-key";document.getElementById("settingsForm").dispatchEvent(new Event("submit",{cancelable:true,bubbles:true}))');
       await until(async()=>await js('document.getElementById("saveButton").disabled'));
+      assert.equal((await js('window.overlay.setTheme("light")')).ok, true);
       await assert.rejects(runtime.saveSettings({provider:'anthropic'}),/already being saved/);
       await until(async()=>await js('!document.getElementById("settingsDialog").open'));
+      assert.equal(runtime.currentState().settings.theme, 'light', 'A pending provider save must preserve a newer toolbar theme change');
+      assert.equal((await js('window.overlay.setTheme("dark")')).ok, true);
       const reopened = new Store(runtime.store.directory,safeStorage);
       assert.deepEqual(reopened.read('credentials.enc',{},true),{anthropic:key,gemini:'replacement-gemini-test-key'});
       assert.equal(await js('document.getElementById("apiKey").value'),'');
@@ -210,6 +221,7 @@ exports.run = async runtime => {
       assert.equal(consoleErrors.length,0,consoleErrors.join('\n'));
       await js('document.querySelector(".copy-code").click()');
     });
+    await require('./theme-desktop').run({ runtime, win, js, until, test, work });
     await test('successful history is encrypted and follow-ups keep image context in memory', async () => {
       const disk=fs.readFileSync(path.join(runtime.app.getPath('userData'),'conversation.enc'));
       assert.equal(disk.includes(Buffer.from('answer is')),false);
@@ -222,6 +234,11 @@ exports.run = async runtime => {
       await runtime.ask({text:'long request'});
       await assert.rejects(runtime.ask({text:'duplicate'}),/already running/);
       await assert.rejects(runtime.saveSettings({provider:'gemini'}),/Stop the current/);
+      const activeId = runtime.currentState().active.id;
+      assert.equal((await js('window.overlay.setTheme("light")')).ok, true);
+      assert.equal(runtime.currentState().busy, true);
+      assert.equal(runtime.currentState().active.id, activeId, 'Appearance must not replace or restart the active answer');
+      assert.equal((await js('window.overlay.setTheme("dark")')).ok, true);
       runtime.cancel(); await until(()=>!runtime.currentState().busy);
       assert.equal(runtime.getHistory().length,4); assert.match(runtime.currentState().lastAttempt.error,/stopped/i);
     });
@@ -361,21 +378,6 @@ exports.run = async runtime => {
         assert.match(runtime.currentState().lastAttempt.text, /before sleep/);
       } finally { runtime.cancel(); runtime.setAnswerFunction(previous); win.setBounds(originalBounds); }
     });
-    await test('lock and unlock notifications preserve an active answer and flush its checkpoint', async () => {
-      const previous = runtime.setAnswerFunction(async ({ onDelta, signal }) => {
-        onDelta('Answer continuing through a lock notification');
-        await new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('Stopped by fixture')), { once: true }));
-      });
-      try {
-        await runtime.ask({ text: 'Lock checkpoint fixture' });
-        powerMonitor.emit('lock-screen');
-        assert.equal(runtime.currentState().busy, true);
-        assert.equal(runtime.store.read('interrupted-work.enc', null, true).text, 'Answer continuing through a lock notification');
-        powerMonitor.emit('unlock-screen'); assert.equal(runtime.currentState().busy, true);
-        assert.equal(win.isAlwaysOnTop(), true);
-        runtime.cancel(); await until(() => !runtime.currentState().busy);
-      } finally { runtime.cancel(); runtime.setAnswerFunction(previous); }
-    });
     await test('renderer crash preserves an active provider request and its encrypted checkpoint', async () => {
       let pendingSignal;
       runtime.setAnswerFunction(async ({ signal, onDelta }) => {
@@ -505,39 +507,6 @@ exports.run = async runtime => {
         dialog.showOpenDialog=async()=>({canceled:true,filePaths:[]});
         assert.deepEqual((await js('window.overlay.upload()')).value,[]);
       } finally {dialog.showOpenDialog=originalOpen;dialog.showSaveDialog=originalSave;}
-    });
-    await test('opt-in diagnostics export only app metadata and never prompts, keys or raw arguments', async () => {
-      assert.equal(runtime.currentState().diagnostics.recording, false);
-      await js('document.getElementById("settingsButton").click();document.getElementById("diagnosticsRecordButton").click()');
-      await until(() => runtime.currentState().diagnostics.recording);
-      const invalid = await js('window.overlay.ask({text:"PRIVATE_DIAGNOSTIC_PROMPT",imageIds:["PRIVATE_INVALID_ARGUMENT"]})');
-      assert.equal(invalid.ok, false);
-      const originalSave = dialog.showSaveDialog, destination = path.join(work, 'diagnostics-fixture.json');
-      try {
-        dialog.showSaveDialog = async () => ({ canceled: false, filePath: destination });
-        await js('document.getElementById("diagnosticsExportButton").click()');
-        await until(async () => fs.existsSync(destination) && !await js('document.getElementById("diagnosticsExportButton").disabled'));
-        const text = fs.readFileSync(destination, 'utf8'), report = JSON.parse(text);
-        assert.equal(report.scope, 'OpenCluely-only'); assert.equal(report.instrumentation.recording, true);
-        assert.ok(report.instrumentation.events.some(event => event.name === 'ask' && event.outcome === 'error'));
-        assert.ok(report.processes.items.some(metric => metric.pid === process.pid));
-        assert.equal(report.window.alwaysOnTop, true); assert.equal(report.recovery.nativeIdentityVerifiedByReport, false);
-        assert.ok(report.files.some(file => file.name === 'overlay/diagnostics.js' && file.sha256));
-        for (const secret of ['PRIVATE_DIAGNOSTIC_PROMPT', 'PRIVATE_INVALID_ARGUMENT', 'replacement-gemini-test-key', 'test-openai-not-a-real-api-key', 'OpenAI test answer', runtime.app.getPath('userData')]) assert.equal(text.includes(secret), false, 'Diagnostic export must exclude private values');
-        assert.equal(await js('document.getElementById("diagnosticsExportButton").disabled'), false);
-      } finally { dialog.showSaveDialog = originalSave; }
-      await js('document.getElementById("diagnosticsRecordButton").click()');
-      await until(() => !runtime.currentState().diagnostics.recording);
-      await js('document.getElementById("closeSettings").click()');
-    });
-    await test('cancelled diagnostic export and invalid recording choices preserve normal app state', async () => {
-      const originalSave = dialog.showSaveDialog;
-      try {
-        dialog.showSaveDialog = async () => ({ canceled: true });
-        assert.equal((await js('window.overlay.exportDiagnostics()')).value, false);
-        assert.equal((await js('window.overlay.setDiagnosticsRecording("yes")')).ok, false);
-        assert.equal(runtime.currentState().diagnostics.recording, false);
-      } finally { dialog.showSaveDialog = originalSave; }
     });
     await test('plain interface accepts ten images, rejects overflow, restores queued previews and sends every image', async () => {
       assert.equal(await js('!!document.querySelector(".brand,.logo,.welcome-symbol,.welcome-kicker,#welcome h1,.eyebrow")'), false);
@@ -832,6 +801,7 @@ exports.run = async runtime => {
       assert.ok(runtime.images.size<=20);
       await runtime.saveSettings({provider:'anthropic',removeKey:true}); assert.equal(runtime.currentState().keyStatus.anthropic,false);
       await assert.rejects(runtime.ask({text:'hello'}),/API key/);
+      assert.equal((await js('window.overlay.setTheme("light")')).ok, true);
     });
     console.log(`Desktop tests passed: ${results.filter(result => result.passed).length}; skipped: ${results.filter(result => result.skipped).length}`);
   } catch (error) { if (!results.some(result=>!result.passed)) results.push({name:'desktop suite setup or completion',passed:false,error:error.message}); console.error(error.stack); }

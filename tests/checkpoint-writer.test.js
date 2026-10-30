@@ -80,14 +80,3 @@ test('a failing error reporter cannot prevent a later successful save', t => {
   writer.mark(); assert.equal(writer.flush(), false);
   t.mock.timers.tick(10); assert.equal(attempts, 2); assert.equal(writer.dirty, false);
 });
-
-test('checkpoint health distinguishes a failed, recovered, and skipped write', t => {
-  let fail = true;
-  const writer = setup(t, { write: () => { if (fail) throw new Error('Disk busy'); } });
-  writer.mark(); writer.flush();
-  assert.deepEqual(writer.status(), { dirty: true, retryScheduled: true, consecutiveFailures: 1, lastSavedAt: null });
-  fail = false; t.mock.timers.tick(10);
-  assert.equal(writer.status().consecutiveFailures, 0); assert.ok(writer.status().lastSavedAt);
-  const skipped = new CheckpointWriter({ write: () => false }); t.after(() => skipped.cancel()); skipped.mark(); skipped.flush();
-  assert.equal(skipped.status().lastSavedAt, null);
-});

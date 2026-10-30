@@ -1,4 +1,4 @@
-# OpenCluely Overlay 2.5.3 for Windows
+# OpenCluely Overlay 2.5.2 for Windows
 
 A Windows desktop assistant that stays above your apps and answers text and image questions using **OpenAI / ChatGPT**, **Claude**, or **Gemini**.
 
@@ -6,7 +6,7 @@ Built from [arth-agrawal/OpenCluely](https://github.com/arth-agrawal/OpenCluely)
 
 ## Get started
 
-1. Install an available Windows setup from [Releases](https://github.com/luffy-taro-106/opencluely-overlay/releases). The current source build produces `dist/OpenCluely-Overlay-Setup-2.5.3.exe`. Check the [port record](docs/WINDOWS-PORT.md) for validation and publication status.
+1. The source produces `dist/OpenCluely-Overlay-Setup-2.5.2.exe`, using the restored 2.5.2 base, three requested shortcut aliases, and the [appearance update](docs/APPEARANCE.md). See [restoration provenance](docs/RESTORE-2.5.2.md). Older public downloads do not contain this patch.
 2. Click the gear, choose OpenAI / ChatGPT, Claude, or Gemini, select a model, enter your provider API key, and save. The app checks API access before saving it encrypted on this device. Save a separate key for each provider you use. Saved keys restore after the app or computer restarts. To replace a key, enter the new key and save; a failed check preserves the previous key. Leave the field blank to keep it.
 3. Type a question and press Enter. Shift+Enter adds a new line.
 4. For an image question, use the image button, paste from the clipboard, drag an image onto the window, or take a screenshot. Preview the image, optionally type a question, and press Enter. With no text, the assistant reads and answers the question in the image.
@@ -15,6 +15,7 @@ These are unsigned development builds; Windows may show a publisher warning. Pub
 
 ## Overlay behavior
 
+- The sun/moon button in the top bar switches between the original dark palette and a neutral white light palette. The choice saves immediately, including during an answer, and restores after reopening. Theme changes do not change opacity, connections or keyboard-focus mode.
 - Stays above ordinary desktop windows. Drag the title bar to move it and use the edges to resize.
 - Showing the overlay, taking a screenshot and using pointer controls preserve browser focus. Click the question or another editable field to type normally; Windows temporarily activates the overlay for keyboard input. Clicking back in the browser restores passive behavior automatically. See [Windows focus behavior](docs/NONACTIVATING-PANEL.md).
 - The pointer button enables click-through, allowing mouse and keyboard input to reach the app underneath. Use Ctrl+Alt+I or the tray to interact again.
@@ -32,6 +33,9 @@ These are unsigned development builds; Windows may show a publisher warning. Pub
 | Type a question | Ctrl+Alt+T |
 | Toggle click-through | Ctrl+Alt+I |
 | Screenshot | Ctrl+Alt+S |
+| Show overlay | Ctrl+Shift+O |
+| Hide overlay | Ctrl+Shift+C |
+| Screenshot (same original capture handler) | Ctrl+Shift+S |
 
 If another app has registered a shortcut, Settings shows a warning and the tray/buttons remain available. The Screenshot button uses the display selected in Settings; the global shortcut captures the display under the pointer. Screenshots are previewed, and nothing is sent until you ask.
 

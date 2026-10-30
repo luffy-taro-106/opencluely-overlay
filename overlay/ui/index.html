@@ -7,6 +7,7 @@
   <title>Chat</title>
   <link rel="stylesheet" href="app.css">
   <link rel="stylesheet" href="selects.css">
+  <link rel="stylesheet" href="theme.css">
 </head>
 <body>
 <div id="appBackdrop" aria-hidden="true"></div>
@@ -20,10 +21,13 @@
   <symbol id="close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
   <symbol id="compact" viewBox="0 0 24 24"><path d="M4 9h16M4 15h16"/><path d="m8 4 4 4 4-4m-8 16 4-4 4 4"/></symbol>
   <symbol id="pin" viewBox="0 0 24 24"><path d="m8 3 8 0-1 6 3 3v2H6v-2l3-3ZM12 14v7"/></symbol>
+  <symbol id="sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.4 1.4m11.2 11.2L19 19M5 19l1.4-1.4M17.6 6.4 19 5"/></symbol>
+  <symbol id="moon" viewBox="0 0 24 24"><path d="M20.5 14A8.7 8.7 0 0 1 10 3.5 8.7 8.7 0 1 0 20.5 14Z"/></symbol>
 </svg>
 <main class="shell" id="shell">
   <header class="titlebar">
     <div class="window-actions">
+      <button class="icon-button" id="themeButton" type="button" title="Switch to light mode" aria-label="Light mode" aria-pressed="false"><svg aria-hidden="true"><use id="themeIcon" href="#sun"/></svg></button>
       <button class="icon-button" id="compactButton" title="Toggle compact view" aria-label="Toggle compact view"><svg><use href="#compact"/></svg></button>
       <button class="icon-button" id="hideButton" title="Hide to tray · Ctrl+Alt+Space" aria-label="Hide to tray"><span class="minus"></span></button>
     </div>
@@ -35,7 +39,7 @@
       <button class="icon-button" id="captureButton" title="Capture selected display · Ctrl+Alt+S" aria-label="Capture a screenshot"><svg><use href="#capture"/></svg></button>
       <button class="icon-button" id="passButton" title="Click-through · Ctrl+Alt+I" aria-label="Toggle click-through" aria-pressed="false"><svg><use href="#pass"/></svg></button>
       <span class="separator"></span>
-      <button class="icon-button" id="settingsButton" title="Settings (uses keyboard focus)" aria-label="Open settings"><svg><use href="#settings"/></svg></button>
+      <button class="icon-button" id="settingsButton" title="Settings · text fields use keyboard focus" aria-label="Open settings"><svg><use href="#settings"/></svg></button>
     </div>
   </div>
   <div class="model-strip"><select id="quickModel" aria-label="Model for the selected provider"></select><select id="quickEffort" aria-label="Reasoning effort" title="Reasoning effort"></select><button id="newChatButton" type="button" class="new-chat-button">＋ New chat</button></div>
@@ -110,11 +114,6 @@
   <section class="chat-archive" aria-label="Previous chats"><label for="chatSelect">Previous chats</label><select id="chatSelect"><option value="">Choose a previous chat…</option></select><div><button type="button" id="openChatButton" class="text-button" disabled>Open selected chat</button><button type="button" id="deleteChatButton" class="text-button danger" disabled>Delete selected chat…</button></div><p class="privacy-note">New chat saves the current conversation here. Chats restore after reopening when conversation history is enabled. Images remain in memory only.</p></section>
   <div class="shortcut-list"><span>Show / hide<kbd data-shortcut="Show / hide">Ctrl+Alt+Space</kbd></span><span>Click-through<kbd data-shortcut="Click-through">Ctrl+Alt+I</kbd></span><span>Screenshot<kbd data-shortcut="Screenshot">Ctrl+Alt+S</kbd></span></div>
   <div class="settings-warning" id="settingsWarnings" hidden></div>
-  <section class="recovery-control" aria-label="App diagnostics">
-    <p class="privacy-note">App diagnostics record call timing and success/failure in memory for this session. Reports include only OpenCluely health and file metadata; no prompts, keys, account details, images or raw arguments.</p>
-    <p id="diagnosticsStatus" class="recovery-status" role="status">Recording is off.</p>
-    <div class="session-actions"><button type="button" id="diagnosticsRecordButton" class="text-button">Start recording</button><button type="button" id="diagnosticsExportButton" class="text-button">Export diagnostic report</button></div>
-  </section>
   <div class="session-actions"><button id="exportButton" class="text-button">Export conversation</button><button id="clearButton" class="text-button danger">Clear conversation</button></div>
   <button id="quitButton" class="quit-button">Quit</button>
   <button id="quitCompletelyButton" class="quit-button" hidden>Quit completely…</button>

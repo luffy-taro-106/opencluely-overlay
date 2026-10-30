@@ -1,0 +1,84 @@
+/* Dark stays the original 2.5.2 palette. Light uses neutral white surfaces;
+   opacity and independent code cutouts retain their existing behavior. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --panel: #fafafa;
+  --line: #dedede;
+  --text: #242424;
+  --muted: #616161;
+  --accent: #245f42;
+  --error: #a12622;
+}
+:root[data-theme="light"] #appBackdrop { border-color: #e6e6e6; }
+:root[data-theme="light"] .icon-button { color: var(--muted); }
+:root[data-theme="light"] .icon-button:hover { background: #f0f0f0; color: var(--text); }
+:root[data-theme="light"] .icon-button[aria-pressed="true"] { background: #e9f1ec; color: var(--accent); }
+:root[data-theme="light"] .provider-pill { background: #fafafa; border-color: #dedede; }
+:root[data-theme="light"] .new-chat-button,
+:root[data-theme="light"] .secondary-button { background: #f7f7f7; border-color: #b5b5b5; }
+:root[data-theme="light"] .new-chat-button:hover { background: #edf3ef; }
+:root[data-theme="light"] .mode-banner { background: #edf3ef; }
+:root[data-theme="light"] .content { scrollbar-color: #b5b5b5 transparent; }
+:root[data-theme="light"] .setup-note button { border-bottom-color: #8a8a8a; }
+:root[data-theme="light"] .status-dot.amber { background: #876316; }
+:root[data-theme="light"] .message-header .model-label { color: var(--muted); }
+:root[data-theme="light"] .message.user .message-body { background: #f7f7f7; border-color: #dedede; }
+:root[data-theme="light"] .message-body code { background: #f0f0f0; }
+:root[data-theme="light"] .message-body pre { background: #f5f5f5; border-color: #dedede; }
+:root[data-theme="light"] .message-body pre code { background: transparent; }
+:root[data-theme="light"] .message-body pre .copy-code { background: #ffffff; border-color: #b5b5b5; }
+:root[data-theme="light"] .message-body blockquote { border-left-color: #8a8a8a; color: var(--muted); }
+:root[data-theme="light"] .message-body blockquote.contains-code {
+  border-left-color: color-mix(in srgb, #8a8a8a calc(var(--app-opacity,.98) * 100%), transparent);
+}
+:root[data-theme="light"] .image-reference { color: var(--accent); }
+:root[data-theme="light"] .message-error,
+:root[data-theme="light"] .settings-error { background: #fff4f3; border-color: #e3aaa6; }
+:root[data-theme="light"] .settings-warning { background: #fff8eb; border-color: #d4bd8c; color: #76540d; }
+:root[data-theme="light"] .retry-button { border-color: #99b3a3; }
+:root[data-theme="light"] .truncated { color: #76540d; }
+:root[data-theme="light"] .jump-button { background: #edf3ef; border-color: #99b3a3; }
+:root[data-theme="light"] .composer { background: #fafafa; border-color: #b5b5b5; }
+:root[data-theme="light"] .composer:focus-within { border-color: #245f42; }
+:root[data-theme="light"] .composer textarea::placeholder,
+:root[data-theme="light"] .input-hint,
+:root[data-theme="light"] .footer { color: var(--muted); }
+:root[data-theme="light"] .input-hint > span { color: #8a8a8a; }
+:root[data-theme="light"] kbd { color: #424242; }
+:root[data-theme="light"] .send-button,
+:root[data-theme="light"] .primary-button { color: #ffffff; }
+:root[data-theme="light"] .send-button:hover { background: #194b32; }
+:root[data-theme="light"] .attachment { border-bottom-color: #dedede; }
+:root[data-theme="light"] .attachment img { border-color: #b5b5b5; }
+:root[data-theme="light"] .drop-zone { background: #fffffff2; border-color: #245f42; }
+:root[data-theme="light"] .toast { background: #f2f7f3; border-color: #99b3a3; box-shadow: 0 4px 18px #00000014; }
+:root[data-theme="light"] dialog {
+  background: #ffffff; border-color: #d2d2d2;
+  box-shadow: 0 6px 28px #0000001f; scrollbar-color: #b5b5b5 transparent;
+}
+:root[data-theme="light"] dialog::backdrop { background: rgb(255 255 255 / calc(.93 * var(--app-opacity,.98))); }
+:root[data-theme="light"] .settings-dialog form > label,
+:root[data-theme="light"] .recovery-control .check-label { color: var(--text); }
+:root[data-theme="light"] .settings-dialog label > input:not([type="checkbox"]),
+:root[data-theme="light"] .settings-dialog label > select,
+:root[data-theme="light"] .settings-dialog label > .overlay-select-trigger,
+:root[data-theme="light"] .chat-archive > .overlay-select-trigger { background: #fafafa; border-color: #b5b5b5; }
+:root[data-theme="light"] .check-label input { accent-color: var(--accent); }
+:root[data-theme="light"] .privacy-note,
+:root[data-theme="light"] .text-button,
+:root[data-theme="light"] .quit-button { color: var(--muted); }
+:root[data-theme="light"] .text-button.danger { color: var(--error); }
+:root[data-theme="light"] .chatgpt-signin-button { border-color: #8a8a8a; }
+:root[data-theme="light"] .chatgpt-signin-button:hover { background: #f5f5f5; border-color: #8a8a8a; }
+:root[data-theme="light"] .quit-button { border-color: #b5b5b5; }
+:root[data-theme="light"] body.pass-through #appBackdrop { border-color: #245f42; }
+:root[data-theme="light"] .overlay-select-trigger:hover:not(:disabled),
+:root[data-theme="light"] .overlay-select-trigger[aria-expanded="true"] { background: #f0f0f0; border-color: #8a8a8a; }
+:root[data-theme="light"] .provider-pill .overlay-select-trigger { background: transparent; }
+:root[data-theme="light"] .overlay-select-list {
+  background: #ffffff; border-color: #8a8a8a; scrollbar-color: #b5b5b5 transparent;
+  box-shadow: 0 4px 16px #0000001f;
+}
+:root[data-theme="light"] .overlay-select-option.active:not(:disabled),
+:root[data-theme="light"] .overlay-select-option:hover:not(:disabled) { background: #edf3ef; }

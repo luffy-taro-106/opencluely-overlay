@@ -5,6 +5,17 @@ const { randomUUID } = require('node:crypto');
 const { DEFAULTS, validateSettings, validateQuestion, inspectImage, clampBounds, boundedContext, diskHistory, validateHistory } = require('../overlay/core');
 const { PROVIDERS, MODEL_CATALOG } = require('../overlay/models');
 
+test('appearance migrates to dark and only accepts the two supported themes', () => {
+  const { theme: _theme, ...legacy } = DEFAULTS;
+  assert.equal(validateSettings({}, legacy).theme, 'dark');
+  const light = validateSettings({ theme: 'light' });
+  assert.equal(light.theme, 'light');
+  assert.equal(validateSettings({ provider: 'gemini' }, light).theme, 'light');
+  assert.equal(validateSettings({ theme: 'dark' }, light).theme, 'dark');
+  for (const theme of ['system', '', null, false, 1, {}, ['light']]) assert.throws(() => validateSettings({ theme }), /Dark or Light/);
+  assert.equal(DEFAULTS.theme, 'dark');
+});
+
 test('preferences reject unsafe input and do not mutate defaults', () => {
   assert.throws(() => validateSettings({ provider: 'other' }));
   assert.throws(() => validateSettings({ opacity: NaN }));

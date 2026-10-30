@@ -13,7 +13,6 @@ const { ChatGPTAuth } = require('./chatgpt-auth');
 const { CodexConnection } = require('./codex');
 const { InterruptedWork } = require('./interrupted-work');
 const { CheckpointWriter } = require('./checkpoint-writer');
-const { Diagnostics, ownProcessMetrics, checkpointStatus, inspectOwnFile } = require('./diagnostics');
 const { QuitGuard } = require('./quit-guard');
 const { WindowsRecovery, recoverySession } = require('./recovery');
 const { MODEL_CATALOG, PROVIDERS, PROVIDER_NAMES, EFFORTS, validModelId, modelDetails } = require('./models');
@@ -45,8 +44,6 @@ let codex, codexEpoch = 0;
 let recoveryBeforeSessionEnd = false;
 let reopenAfterQuit = false;
 let archivedChats = [];
-const diagnostics = new Diagnostics();
-let diagnosticsExportBusy = false;
 const images = new Map(), warnings = [], recoveryTimes = [], shortcuts = [];
 const draftImageIds = new Set();
 const html = path.join(__dirname, 'ui', 'index.html');
@@ -130,7 +127,6 @@ function currentState() {
     screenPermission: screenPermission(),
     startupAvailable: canStartAtLogin(), startupStatus: loginState().status || '',
     recovery: recovery?.status() || { available: false, enabled: false, busy: false, error: '' },
-    diagnostics: diagnostics.status(),
     displays: screen.getAllDisplays().map((display, i) => ({ id: String(display.id), name: display.label || `Display ${i + 1}`, primary: display.id === screen.getPrimaryDisplay().id }))
   };
 }
@@ -320,7 +316,6 @@ function manualReopen() {
   }
 }
 function allowSessionEnd(terminal = true) {
-  diagnostics.lifecycle('session-end');
   flushWindowState();
   interruptedWork?.flush();
   if (!quitGuard.sessionEnding) recoveryBeforeSessionEnd = !!recovery?.enabled || recovery?.shouldResumeAfterSessionEnd?.() === true;
@@ -328,7 +323,6 @@ function allowSessionEnd(terminal = true) {
 }
 function cancelSessionEnd() {
   if (!quitGuard.sessionEnding) return;
-  diagnostics.lifecycle('session-end-cancelled');
   quitGuard.cancelSessionEnd();
   const restoreRecovery = recoveryBeforeSessionEnd; recoveryBeforeSessionEnd = false;
   if (restoreRecovery && recovery?.available && !quitting) {
@@ -410,7 +404,7 @@ function togglePassThrough() {
   return passThrough;
 }
 function persistGeometry() {
-  if (!win || win.isDestroyed() || quitting) return false;
+  if (!win || win.isDestroyed() || quitting) return;
   const bounds = win.getBounds();
   settings.bounds = settings.compact ? { ...bounds, height: normalBounds?.height || 700 } : bounds;
   if (!settings.compact) normalBounds = bounds;
@@ -433,7 +427,6 @@ function recoverRenderer(reason) {
   // Provider requests and their checkpoints live in main. A renderer crash
   // should not interrupt a healthy request; the reloaded UI receives its state.
   const now = Date.now();
-  diagnostics.lifecycle('renderer-recovery');
   recoveryTimes.push(now);
   while (recoveryTimes[0] < now - 60000) recoveryTimes.shift();
   log(`renderer-recovery:${reason}`);
@@ -663,6 +656,8 @@ async function saveSettings(input) {
     const credentialsChanged = !!replacementKey || input.removeKey === true;
     // A user can move/compact the window while the network check is in progress.
     next.bounds = settings.bounds;
+    // A toolbar theme change may finish while a provider key is being checked.
+    if (!('theme' in input)) next.theme = settings.theme;
     if (!('compact' in input)) next.compact = settings.compact;
     const hadCredentials = fs.existsSync(path.join(store.directory, 'credentials.enc'));
     const profileId = chatgpt.publicState().activeProfileId;
@@ -705,59 +700,9 @@ async function saveSettings(input) {
 function handle(channel, action) {
   ipcMain.handle(`overlay:${channel}`, async (event, ...args) => {
     if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || event.senderFrame.url !== pageURL) return { ok: false, error: 'Unauthorized app request.' };
-    try { return { ok: true, value: await diagnostics.run(channel, () => action(...args)) }; }
+    try { return { ok: true, value: await action(...args) }; }
     catch (error) { return { ok: false, error: error.message || 'This action could not be completed.' }; }
   });
-}
-async function diagnosticReport() {
-  const metadata = require('../package.json');
-  const recoveryState = recovery?.status() || {};
-  const bounds = win && !win.isDestroyed() ? win.getBounds() : null;
-  const knownFiles = ['package.json', 'overlay/main.js', 'overlay/preload.js', 'overlay/diagnostics.js',
-    'overlay/checkpoint-writer.js', 'overlay/storage.js', 'overlay/recovery.js'];
-  const files = await Promise.all(knownFiles.map(name => inspectOwnFile(name, path.join(__dirname, '..', ...name.split('/')))));
-  if (process.platform === 'win32') files.push(await inspectOwnFile('recovery-helper.exe', recovery.helperPath, { pe: true }));
-  let processes = [], processInspection = 'available';
-  try { processes = ownProcessMetrics(app.getAppMetrics()); } catch { processInspection = 'unavailable'; }
-  return {
-    schemaVersion: 1, scope: 'OpenCluely-only', createdAt: new Date().toISOString(),
-    instrumentation: diagnostics.snapshot(),
-    runtime: { app: app.getVersion(), platform: process.platform, arch: process.arch, windowsOrKernelRelease: os.release(),
-      node: process.versions.node, electron: process.versions.electron, chromium: process.versions.chrome },
-    resources: { uptimeSeconds: process.uptime(), mainProcessMemoryBytes: process.memoryUsage(),
-      systemFreeMemoryBytes: os.freemem(), systemTotalMemoryBytes: os.totalmem() },
-    processes: { scope: 'Electron app-owned processes only', status: processInspection, items: processes },
-    window: bounds ? { bounds, visible: win.isVisible(), minimized: win.isMinimized(), focused: win.isFocused(),
-      alwaysOnTop: win.isAlwaysOnTop(), captureProtectionConfigured: win.isContentProtected(), captureCompatibilityTested: false } : null,
-    displays: screen.getAllDisplays().slice(0, 16).map(display => ({ width: display.bounds.width, height: display.bounds.height,
-      scaleFactor: display.scaleFactor, rotation: display.rotation })),
-    recovery: { available: recoveryState.available === true, enabledReported: recoveryState.enabled === true,
-      busy: recoveryState.busy === true, hasError: !!recoveryState.error, nativeIdentityVerifiedByReport: false },
-    checkpoints: { position: checkpointStatus(geometryCheckpoint?.status()),
-      answer: checkpointStatus(interruptedWork?.checkpoint.status()), historyEnabled: settings.rememberHistory },
-    connections: { credentialStorageAvailable: store.available(), selectedProvider: settings.provider,
-      chatgptConnected: chatgpt.publicState().connected, codexConnected: codex.publicState().connected,
-      apiKeyProvidersConfigured: ['anthropic', 'gemini', 'openai'].filter(provider => !!keys[provider]),
-      remoteAvailabilityTested: false },
-    files, dependencies: { scope: 'declared direct dependencies; not a complete SBOM', ...metadata.dependencies },
-    signatures: { verification: 'not-performed', signingConfigured: metadata.build?.win?.signExecutable !== false },
-    limits: ['No other application is inspected or modified.', 'No prompts, keys, account identities, images, raw arguments or error messages are recorded.',
-      'Call duration and main-process CPU deltas include overlapping activity; logger timing is a partial instrumentation cost, not a benchmark.',
-      'A file hash identifies the observed file; it does not establish trust or compare against a signed baseline.',
-      'Recovery enabled status is cached app state, not proof that the native helper is healthy.']
-  };
-}
-async function exportDiagnostics() {
-  if (diagnosticsExportBusy) throw new Error('A diagnostic export is already in progress.');
-  diagnosticsExportBusy = true;
-  try {
-    const result = await dialog.showSaveDialog(win, { title: 'Export OpenCluely diagnostics', defaultPath: 'OpenCluely-diagnostics.json',
-      filters: [{ name: 'Diagnostic JSON', extensions: ['json'] }] });
-    if (result.canceled || !result.filePath) return false;
-    const report = await diagnosticReport();
-    await fs.promises.writeFile(result.filePath, JSON.stringify(report, null, 2), { encoding: 'utf8', mode: 0o600 });
-    return true;
-  } finally { diagnosticsExportBusy = false; }
 }
 async function openScreenSettings() {
   if (!platform.mac) return false;
@@ -767,17 +712,20 @@ async function openScreenSettings() {
 function requestKeyboardFocus(field = 'question') {
   if (!['question', 'apiKey', 'model'].includes(field)) throw new Error('Choose an editable overlay field.');
   if (!win || win.isDestroyed() || !win.isVisible() || passThrough) throw new Error('Show the overlay and turn off click-through before typing.');
-  panel?.allowKeyboard(); applyWindowMode(); win.focus(); win.webContents.focus(); syncState();
+  panel?.allowKeyboard(); applyWindowMode();
+  if (!win.isFocused()) win.focus();
+  if (!win.webContents.isFocused()) win.webContents.focus();
+  syncState();
   return currentState();
 }
 function registerIPC() {
   handle('state', currentState); handle('ask', ask);
-  handle('set-diagnostics-recording', enabled => {
-    if (typeof enabled !== 'boolean') throw new Error('Choose whether diagnostic recording is on or off.');
-    if (enabled) diagnostics.start(); else diagnostics.stop();
-    syncState(); return diagnostics.status();
+  handle('set-theme', theme => {
+    const next = validateSettings({ theme }, settings);
+    // Appearance is independent of provider/account operations and streaming.
+    store.write('preferences.json', next);
+    settings = next; syncState(); return currentState();
   });
-  handle('export-diagnostics', exportDiagnostics);
   handle('focus-field', requestKeyboardFocus);
   handle('cancel', () => { pendingAsk?.controller.abort(); active?.controller.abort(); return true; });
   handle('set-attachments', ids => {
@@ -857,14 +805,20 @@ function registerIPC() {
   handle('quit-completely', () => requestQuit(true));
 }
 function registerShortcuts() {
+  const takeScreenshot = async () => {
+    try { if (draftImageIds.size >= MAX_IMAGES) throw new Error(`Attach up to ${MAX_IMAGES} images per question. Remove one before taking another screenshot.`); const image = await capture(); showOverlay(false); emit({ type: 'attach', image }); }
+    catch (error) { showOverlay(false); emit({ type: 'notice', text: error.message }); }
+  };
   const commands = [
     ['CommandOrControl+Alt+Space', 'Show / hide', toggleVisibility],
     ['CommandOrControl+Alt+T', 'Type a question', () => showOverlay(true)],
     ['CommandOrControl+Alt+I', 'Click-through', togglePassThrough],
-    ['CommandOrControl+Alt+S', 'Screenshot', async () => {
-      try { if (draftImageIds.size >= MAX_IMAGES) throw new Error(`Attach up to ${MAX_IMAGES} images per question. Remove one before taking another screenshot.`); const image = await capture(); showOverlay(false); emit({ type: 'attach', image }); }
-      catch (error) { showOverlay(false); emit({ type: 'notice', text: error.message }); }
-    }]
+    ['CommandOrControl+Alt+S', 'Screenshot', takeScreenshot],
+    ...(process.platform === 'win32' ? [
+      ['Control+Shift+O', 'Show overlay', () => showOverlay(false)],
+      ['Control+Shift+C', 'Hide overlay', hideOverlay],
+      ['Control+Shift+S', 'Screenshot (alias)', takeScreenshot]
+    ] : [])
   ];
   for (const [accelerator, label, action] of commands) {
     let registered = false;
@@ -944,24 +898,19 @@ async function initialize() {
   if (!platform.mac) tray.on('click', () => showOverlay(false));
   updateTray();
   registerIPC(); registerShortcuts();
-  for (const event of ['display-added', 'display-removed', 'display-metrics-changed']) screen.on(event, () => {
-    diagnostics.lifecycle('display-change'); fitWindow(); syncState();
-  });
-  powerMonitor.on('resume', () => { diagnostics.lifecycle('resume'); applyWindowMode(); fitWindow(); syncState(); });
+  for (const event of ['display-added', 'display-removed', 'display-metrics-changed']) screen.on(event, () => { fitWindow(); syncState(); });
+  powerMonitor.on('resume', () => { applyWindowMode(); fitWindow(); syncState(); });
   powerMonitor.on('suspend', () => {
     // Persist before aborting: Windows may suspend before the async request
     // cancellation handler runs. Never block suspend or restart a request.
-    diagnostics.lifecycle('suspend'); flushWindowState(); interruptedWork?.flush(); active?.controller.abort();
+    flushWindowState(); interruptedWork?.flush(); active?.controller.abort();
   });
-  powerMonitor.on('lock-screen', () => { diagnostics.lifecycle('lock'); flushWindowState(); interruptedWork?.flush(); });
-  powerMonitor.on('unlock-screen', () => { diagnostics.lifecycle('unlock'); applyWindowMode(); fitWindow(); syncState(); });
   powerMonitor.on('shutdown', () => allowSessionEnd(true));
   if (recovery.available) {
     try { await recovery.enable({ sessionId: automaticSession }); }
     catch { log('automatic-reopening-start-failed'); }
   }
   initializationComplete = true;
-  diagnostics.lifecycle('ready');
   log('app-ready');
   if (!testMode) {
     void refreshModels();
@@ -1002,7 +951,6 @@ else {
     // Only a prepared ordinary Quit keeps its verified supervisor. Explicit
     // complete exit and Windows shutdown always disarm it.
     if (!reopenAfterQuit || quitGuard.sessionEnding) recovery?.disarmForSessionEnd();
-    diagnostics.lifecycle('quit');
     quitting = true; pendingAsk?.controller.abort(); active?.controller.abort(); geometryCheckpoint?.cancel();
     chatgpt?.cancelSignIn();
     codex?.stop();
@@ -1018,5 +966,5 @@ else {
     else { dialog.showErrorBox('OpenCluely could not start', 'The app could not initialize. Reopen it or reinstall the app. Your saved data is preserved.'); app.exit(1); }
   });
 }
-process.on('uncaughtException', () => { diagnostics.lifecycle('fatal'); log('main-process-fatal'); app.exit(1); });
+process.on('uncaughtException', () => { log('main-process-fatal'); app.exit(1); });
 process.on('unhandledRejection', () => { log('unhandled-operation'); });

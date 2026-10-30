@@ -10,7 +10,6 @@ class CheckpointWriter {
     this.write = write; this.report = report; this.interval = interval;
     this.maximumRetryDelay = maximumRetryDelay;
     this.dirty = false; this.timer = null; this.retryDelay = interval;
-    this.consecutiveFailures = 0; this.lastSavedAt = null;
   }
   schedule(delay) {
     if (!this.dirty || this.timer) return;
@@ -22,12 +21,9 @@ class CheckpointWriter {
     clearTimeout(this.timer); this.timer = null;
     if (!this.dirty) return true;
     try {
-      const committed = this.write(); this.dirty = false; this.retryDelay = this.interval;
-      this.consecutiveFailures = 0;
-      if (committed !== false) this.lastSavedAt = new Date().toISOString();
+      this.write(); this.dirty = false; this.retryDelay = this.interval;
       return true;
     } catch {
-      this.consecutiveFailures++;
       this.schedule(this.retryDelay);
       this.retryDelay = Math.min(this.maximumRetryDelay, this.retryDelay * 2);
       try { this.report(); } catch { /* Reporting must not interrupt a retry. */ }
@@ -37,10 +33,7 @@ class CheckpointWriter {
   cancel() {
     clearTimeout(this.timer); this.timer = null;
     this.dirty = false; this.retryDelay = this.interval;
-    this.consecutiveFailures = 0;
   }
-  status() { return { dirty: this.dirty, retryScheduled: !!this.timer && this.dirty,
-    consecutiveFailures: this.consecutiveFailures, lastSavedAt: this.lastSavedAt }; }
 }
 
 module.exports = { CheckpointWriter };

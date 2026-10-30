@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const invoke = (channel, ...args) => ipcRenderer.invoke(`overlay:${channel}`, ...args);
 contextBridge.exposeInMainWorld('overlay', {
   state: () => invoke('state'),
+  setTheme: theme => invoke('set-theme', theme),
   focusField: field => invoke('focus-field', field),
   ask: question => invoke('ask', question),
   newChat: () => invoke('new-chat'),
@@ -29,8 +30,6 @@ contextBridge.exposeInMainWorld('overlay', {
   openScreenSettings: () => invoke('screen-settings'),
   clear: () => invoke('clear'),
   export: () => invoke('export'),
-  setDiagnosticsRecording: enabled => invoke('set-diagnostics-recording', enabled),
-  exportDiagnostics: () => invoke('export-diagnostics'),
   hide: () => invoke('hide'),
   passThrough: () => invoke('pass-through'),
   compact: () => invoke('compact'),

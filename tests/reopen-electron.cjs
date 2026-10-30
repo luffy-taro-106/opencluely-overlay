@@ -19,6 +19,7 @@ app.whenReady().then(()=>{
     const store=new Store(profile,safeStorage);
     assert.deepEqual(store.read('credentials.enc',{},true),{gemini:'replacement-gemini-test-key',openai:'test-openai-not-a-real-api-key'});
     assert.equal(store.read('preferences.json',{}).hideFromCapture,true);
+    assert.equal(store.read('preferences.json',{}).theme, 'light', 'Appearance restores in a fresh Electron process');
     assert.equal(store.read('conversation.enc',[],true)[0].text,'Current chat after restart');
     const chats=store.read('chats.enc',null,true);
     assert.equal(chats.current[0].text,'Current chat after restart');

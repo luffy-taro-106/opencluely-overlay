@@ -1,6 +1,12 @@
-# Windows 2.5.3 app diagnostics — 27 October 2026
+# Windows 2.5.2 appearance patch — 30 October 2026
 
-Built locally with opt-in, app-owned call instrumentation and a redacted local report. All 218 suite checks pass, and packaged components match source. The running user installation has not been replaced by this build. See [feature coverage](DIAGNOSTICS.md) and [verification/installation status](VERIFICATION-2.5.3.md).
+Added a persistent sun/moon toggle, neutral white light surfaces, matching code/menu/dialog colors and validation that theme changes preserve an active answer and a pending key-save operation. Kept the existing typing behavior; pointer controls remain passive and an already focused editor no longer repeats native focus requests. All 154 unit and 48 desktop checks pass. See [palette choices, research and limits](APPEARANCE.md).
+
+---
+
+# Windows 2.5.2 restoration — 28 October 2026
+
+Recovered the original application's 24 runtime files from the verified 2.5.2 installer. That restoration added only three Windows shortcut aliases through the existing registration and capture paths. Later native Settings, performance and diagnostics implementations were removed. See [restoration provenance](RESTORE-2.5.2.md). At that time nothing was pushed to GitHub; the appearance patch above is a subsequent update.
 
 ---
 

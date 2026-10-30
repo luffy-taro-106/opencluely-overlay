@@ -11,8 +11,8 @@ const messageContainer = $('messages');
 const content = $('content');
 let selectedDisplay = sessionStorage.getItem('display') || '';
 let recoveryRequested = null, recoveryActionError = '';
-let diagnosticsRecordingBusy = false, diagnosticsExporting = false;
 let backdropFrame = 0;
+let themeChanging = false;
 let chatgptActionPending = false, chatgptSigningIn = false, chatgptActionError = '', signingOutProfile = null, settingsSaving = false;
 let codexActionPending = false, codexActionError = '';
 const accountProvider = provider => provider === 'chatgpt' || provider === 'codex';
@@ -26,7 +26,8 @@ function focusQuestion() { if (!document.querySelector('dialog[open]') && !state
 // DOM focus during state updates, image attachment, or recovery stays passive.
 document.addEventListener('pointerdown', guard(async event => {
   const field = event.target.closest?.('#question, #apiKey, #model');
-  if (event.isTrusted && field && !field.disabled && !field.readOnly && state?.panelBehavior?.typingRequiresActivation) await call('focusField', field.id);
+  if (event.isTrusted && field && !field.disabled && !field.readOnly && state?.panelBehavior?.typingRequiresActivation &&
+    !(state.panelBehavior.keyboardFocus && document.hasFocus())) await call('focusField', field.id);
 }), true);
 
 // The app background has holes behind visible code boxes. Otherwise an opaque
@@ -260,15 +261,13 @@ function renderRecovery() {
   $('recoveryError').textContent = error;
   $('recoveryError').hidden = !error;
 }
-function renderDiagnostics() {
-  const recording = !!state?.diagnostics?.recording;
-  $('diagnosticsRecordButton').textContent = recording ? 'Stop recording' : 'Start recording';
-  $('diagnosticsRecordButton').disabled = diagnosticsRecordingBusy;
-  $('diagnosticsExportButton').disabled = diagnosticsExporting;
-  $('diagnosticsStatus').textContent = recording ? 'Recording app call timing for this session.' : 'Recording is off.';
-}
 function applyState(value) {
   state = value;
+  const light = state.settings.theme === 'light';
+  document.documentElement.dataset.theme = light ? 'light' : 'dark';
+  $('themeButton').setAttribute('aria-pressed', String(light));
+  $('themeButton').title = `Switch to ${light ? 'dark' : 'light'} mode`;
+  $('themeIcon').setAttribute('href', light ? '#moon' : '#sun');
   document.documentElement.style.setProperty('--app-opacity', String(state.settings.opacity));
   document.documentElement.style.setProperty('--code-box-opacity', String(state.settings.codeOpacity ?? 1));
   scheduleBackdrop();
@@ -302,7 +301,7 @@ function applyState(value) {
   $('setupLead').textContent = chatgptSelected ? `Connect your ${accountName} account in ` : 'Add your API key in ';
   $('setupTail').textContent = chatgptSelected ? ' to use your plan.' : ' to get started.';
   $('settingsWarnings').textContent = state.warnings.join('\n'); $('settingsWarnings').hidden = !state.warnings.length;
-  renderTimeline(); updateControls(); renderRecovery(); renderDiagnostics(); window.overlaySelects?.refresh();
+  renderTimeline(); updateControls(); renderRecovery(); window.overlaySelects?.refresh();
 }
 function renderAttachments() {
   $('attachment').hidden = !attachments.length;
@@ -516,6 +515,12 @@ $('uploadButton').addEventListener('click', guard(() => loadAttachments(limit =>
 $('captureButton').addEventListener('click', guard(() => loadAttachments(() => call('capture', selectedDisplay || undefined))));
 $('removeImages').addEventListener('click', guard(() => removeAttachments()));
 $('hideButton').addEventListener('click', guard(() => call('hide')));
+$('themeButton').addEventListener('click', guard(async () => {
+  if (themeChanging || !state) return;
+  themeChanging = true; $('themeButton').disabled = true;
+  try { applyState(await call('setTheme', state.settings.theme === 'light' ? 'dark' : 'light')); }
+  finally { themeChanging = false; $('themeButton').disabled = false; }
+}));
 $('compactButton').addEventListener('click', guard(() => call('compact')));
 $('passButton').addEventListener('click', guard(() => call('passThrough')));
 $('stopButton').addEventListener('click', guard(async () => { await call('cancel'); $('statusText').textContent = 'Stopping…'; }));
@@ -613,18 +618,6 @@ $('settingsForm').addEventListener('submit', async event => {
 });
 $('removeKey').addEventListener('click', guard(async () => { if (accountProvider($('settingsProvider').value)) return; applyState(await call('saveSettings', { provider: $('settingsProvider').value, removeKey: true })); populateKeyFields(); notify('Saved key removed.'); }));
 $('exportButton').addEventListener('click', guard(async () => { if (await call('export')) notify('Conversation exported.'); }));
-$('diagnosticsRecordButton').addEventListener('click', guard(async () => {
-  if (diagnosticsRecordingBusy) return;
-  diagnosticsRecordingBusy = true; renderDiagnostics();
-  try { await call('setDiagnosticsRecording', !state?.diagnostics?.recording); applyState(await call('state')); }
-  finally { diagnosticsRecordingBusy = false; renderDiagnostics(); }
-}));
-$('diagnosticsExportButton').addEventListener('click', guard(async () => {
-  if (diagnosticsExporting) return;
-  diagnosticsExporting = true; renderDiagnostics();
-  try { if (await call('exportDiagnostics')) notify('App diagnostic report exported.'); }
-  finally { diagnosticsExporting = false; renderDiagnostics(); }
-}));
 $('clearButton').addEventListener('click', () => { $('clearDialog').showModal(); });
 $('cancelClear').addEventListener('click', () => $('clearDialog').close());
 $('confirmClear').addEventListener('click', guard(async () => { await call('clear'); await setAttachments([]); $('clearDialog').close(); $('settingsDialog').close(); notify('Conversation cleared.'); }));
